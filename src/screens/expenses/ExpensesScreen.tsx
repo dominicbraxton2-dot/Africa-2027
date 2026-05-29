@@ -1,0 +1,778 @@
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  Modal,
+  ScrollView,
+  Switch,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
+import { ScreenHeader } from '../../components/common/ScreenHeader';
+import { Card } from '../../components/common/Card';
+import { GoldButton } from '../../components/common/GoldButton';
+import { GoldInput } from '../../components/common/GoldInput';
+import { EmptyState } from '../../components/common/EmptyState';
+import { useTripStore } from '../../store/tripStore';
+import { useAuthStore } from '../../store/authStore';
+import { Expense, ExpenseCategory, SplitType, EXPENSE_CATEGORIES, CURRENCIES } from '../../types';
+import { convertToUSD, formatCurrency } from '../../services/currencyService';
+import { format } from 'date-fns';
+
+interface Props {
+  navigation: any;
+  route?: any;
+}
+
+export function ExpensesScreen({ navigation, route }: Props) {
+  const { expenses, fetchExpenses, addExpense, allUsers, fetchAllUsers } = useTripStore();
+  const { user } = useAuthStore();
+  const [showModal, setShowModal] = useState(route?.params?.openAdd || false);
+  const [filterCategory, setFilterCategory] = useState<ExpenseCategory | 'all'>('all');
+
+  // New expense form state
+  const [title, setTitle] = useState('');
+  const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState('USD');
+  const [category, setCategory] = useState<ExpenseCategory>('dining');
+  const [splitType, setSplitType] = useState<SplitType>('equal');
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+  const [customPercentages, setCustomPercentages] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [usdPreview, setUsdPreview] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetchExpenses();
+    fetchAllUsers();
+  }, []);
+
+  useEffect(() => {
+    if (route?.params?.receiptData) {
+      const { merchant, total, currency: rc } = route.params.receiptData;
+      if (merchant) setTitle(merchant);
+      if (total) setAmount(String(total));
+      if (rc) setCurrency(rc);
+      setShowModal(true);
+    }
+  }, [route?.params]);
+
+  const handleAmountChange = async (val: string) => {
+    setAmount(val);
+    if (val && !isNaN(parseFloat(val))) {
+      setConverting(true);
+      const { usdAmount } = await convertToUSD(parseFloat(val), currency);
+      setUsdPreview(usdAmount);
+      setConverting(false);
+    } else {
+      setUsdPreview(null);
+    }
+  };
+
+  const toggleUser = (userId: string) => {
+    setSelectedUsers((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
+  };
+
+  const resetForm = () => {
+    setTitle('');
+    setAmount('');
+    setCurrency('USD');
+    setCategory('dining');
+    setSplitType('equal');
+    setSelectedUsers([]);
+    setCustomAmounts({});
+    setCustomPercentages({});
+    setNotes('');
+    setUsdPreview(null);
+  };
+
+  const handleSave = async () => {
+    if (!title.trim()) return Alert.alert('Required', 'Please enter an expense title.');
+    if (!amount || isNaN(parseFloat(amount))) return Alert.alert('Required', 'Please enter a valid amount.');
+    if (selectedUsers.length === 0) return Alert.alert('Required', 'Select at least one person to split with.');
+
+    setSaving(true);
+    try {
+      const rawAmount = parseFloat(amount);
+      const { usdAmount, rate } = await convertToUSD(rawAmount, currency);
+
+      let splits = [];
+      if (splitType === 'equal') {
+        const perPerson = usdAmount / selectedUsers.length;
+        splits = selectedUsers.map((uid) => ({
+          user_id: uid,
+          amount: Math.round(perPerson * 100) / 100,
+          is_settled: uid === user?.id,
+        }));
+      } else if (splitType === 'percentage') {
+        splits = selectedUsers.map((uid) => {
+          const pct = parseFloat(customPercentages[uid] || '0') / 100;
+          return {
+            user_id: uid,
+            amount: Math.round(usdAmount * pct * 100) / 100,
+            percentage: pct * 100,
+            is_settled: uid === user?.id,
+          };
+        });
+      } else {
+        splits = selectedUsers.map((uid) => ({
+          user_id: uid,
+          amount: parseFloat(customAmounts[uid] || '0'),
+          is_settled: uid === user?.id,
+        }));
+      }
+
+      await addExpense({
+        title: title.trim(),
+        category,
+        amount_usd: Math.round(usdAmount * 100) / 100,
+        original_amount: rawAmount,
+        original_currency: currency,
+        exchange_rate: rate,
+        paid_by: user?.id || '',
+        split_type: splitType,
+        splits,
+        date: new Date().toISOString(),
+        notes: notes.trim() || undefined,
+      });
+
+      setShowModal(false);
+      resetForm();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const filtered = filterCategory === 'all'
+    ? expenses
+    : expenses.filter((e) => e.category === filterCategory);
+
+  const totalSpent = expenses.reduce((sum, e) => sum + e.amount_usd, 0);
+
+  const renderExpense = ({ item }: { item: Expense }) => {
+    const catMeta = EXPENSE_CATEGORIES.find((c) => c.key === item.category)!;
+    const paidByName = allUsers.find((u) => u.id === item.paid_by)?.full_name?.split(' ')[0] || 'Someone';
+    const mySplit = item.splits?.find((s) => s.user_id === user?.id);
+
+    return (
+      <Card style={styles.expenseCard}>
+        <View style={styles.expenseRow}>
+          <View style={[styles.catBadge, { backgroundColor: catMeta.color + '20' }]}>
+            <Text style={styles.catIcon}>{catMeta.icon}</Text>
+          </View>
+          <View style={styles.expenseInfo}>
+            <Text style={styles.expenseTitle}>{item.title}</Text>
+            <Text style={styles.expenseMeta}>
+              {format(new Date(item.date), 'MMM d')} · Paid by {paidByName}
+              {item.original_currency !== 'USD' && (
+                <Text style={styles.originalCurrency}>
+                  {' '}({formatCurrency(item.original_amount || 0, item.original_currency)})
+                </Text>
+              )}
+            </Text>
+          </View>
+          <View style={styles.expenseAmounts}>
+            <Text style={styles.expenseTotal}>${item.amount_usd.toFixed(2)}</Text>
+            {mySplit && (
+              <Text style={[styles.mySplit, mySplit.is_settled && styles.settled]}>
+                {mySplit.is_settled ? '✓ settled' : `you: $${mySplit.amount.toFixed(2)}`}
+              </Text>
+            )}
+          </View>
+        </View>
+        {item.splits && item.splits.length > 0 && (
+          <View style={styles.splitPreview}>
+            {item.splits.slice(0, 4).map((s) => {
+              const name = allUsers.find((u) => u.id === s.user_id)?.full_name?.split(' ')[0] || '?';
+              return (
+                <View key={s.user_id} style={styles.splitChip}>
+                  <Text style={styles.splitChipText}>{name}</Text>
+                </View>
+              );
+            })}
+            {item.splits.length > 4 && (
+              <Text style={styles.moreSplits}>+{item.splits.length - 4}</Text>
+            )}
+          </View>
+        )}
+      </Card>
+    );
+  };
+
+  return (
+    <View style={styles.root}>
+      <ScreenHeader
+        title="Group Expenses"
+        subtitle="Track & split costs"
+        onBack={() => navigation.goBack()}
+        rightAction={{ icon: '＋', onPress: () => setShowModal(true) }}
+      />
+
+      {/* Summary */}
+      <LinearGradient
+        colors={['#1A1200', '#0F0A00']}
+        style={styles.summary}
+      >
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryLabel}>Total Spent</Text>
+          <Text style={styles.summaryValue}>${totalSpent.toFixed(2)}</Text>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryLabel}>Expenses</Text>
+          <Text style={styles.summaryValue}>{expenses.length}</Text>
+        </View>
+        <View style={styles.summaryDivider} />
+        <TouchableOpacity
+          style={styles.summaryItem}
+          onPress={() => navigation.navigate('Balances')}
+        >
+          <Text style={styles.summaryLabel}>My Balance</Text>
+          <Text style={[styles.summaryValue, { color: Colors.gold }]}>View →</Text>
+        </TouchableOpacity>
+      </LinearGradient>
+
+      {/* Category Filter */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filterRow}
+        style={styles.filterScroll}
+      >
+        <TouchableOpacity
+          onPress={() => setFilterCategory('all')}
+          style={[styles.filterChip, filterCategory === 'all' && styles.filterActive]}
+        >
+          <Text style={[styles.filterText, filterCategory === 'all' && styles.filterTextActive]}>
+            All
+          </Text>
+        </TouchableOpacity>
+        {EXPENSE_CATEGORIES.map((c) => (
+          <TouchableOpacity
+            key={c.key}
+            onPress={() => setFilterCategory(c.key)}
+            style={[styles.filterChip, filterCategory === c.key && styles.filterActive]}
+          >
+            <Text style={[styles.filterText, filterCategory === c.key && styles.filterTextActive]}>
+              {c.icon} {c.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* Expense List */}
+      <FlatList
+        data={filtered}
+        keyExtractor={(item) => item.id}
+        renderItem={renderExpense}
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <EmptyState
+            icon="💳"
+            title="No Expenses Yet"
+            subtitle="Add your first expense by tapping ＋ above."
+            action={{ label: 'Add Expense', onPress: () => setShowModal(true) }}
+          />
+        }
+      />
+
+      {/* Add Expense Modal */}
+      <Modal visible={showModal} animationType="slide" presentationStyle="pageSheet">
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Expense</Text>
+            <TouchableOpacity onPress={() => { setShowModal(false); resetForm(); }}>
+              <Text style={styles.modalClose}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+            <ScrollView contentContainerStyle={styles.modalScroll} showsVerticalScrollIndicator={false}>
+              <GoldInput
+                label="Description"
+                placeholder="e.g. Dinner at Gold Restaurant"
+                value={title}
+                onChangeText={setTitle}
+              />
+
+              {/* Amount + Currency */}
+              <Text style={styles.fieldLabel}>AMOUNT</Text>
+              <View style={styles.amountRow}>
+                <GoldInput
+                  placeholder="0.00"
+                  value={amount}
+                  onChangeText={handleAmountChange}
+                  keyboardType="decimal-pad"
+                  containerStyle={{ flex: 1, marginBottom: 0 }}
+                />
+                <View style={styles.currencyPicker}>
+                  {Object.keys(CURRENCIES).map((c) => (
+                    <TouchableOpacity
+                      key={c}
+                      onPress={() => {
+                        setCurrency(c);
+                        if (amount) handleAmountChange(amount);
+                      }}
+                      style={[styles.currencyChip, currency === c && styles.currencyActive]}
+                    >
+                      <Text style={[styles.currencyText, currency === c && styles.currencyTextActive]}>
+                        {c}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              {usdPreview !== null && currency !== 'USD' && (
+                <Text style={styles.usdPreview}>
+                  {converting ? 'Converting…' : `≈ $${usdPreview.toFixed(2)} USD`}
+                </Text>
+              )}
+
+              {/* Category */}
+              <Text style={[styles.fieldLabel, { marginTop: Spacing.md }]}>CATEGORY</Text>
+              <View style={styles.categoryGrid}>
+                {EXPENSE_CATEGORIES.map((c) => (
+                  <TouchableOpacity
+                    key={c.key}
+                    onPress={() => setCategory(c.key)}
+                    style={[
+                      styles.categoryChip,
+                      category === c.key && { backgroundColor: c.color + '30', borderColor: c.color },
+                    ]}
+                  >
+                    <Text style={styles.categoryIcon}>{c.icon}</Text>
+                    <Text style={[styles.categoryLabel, category === c.key && { color: c.color }]}>
+                      {c.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Split among */}
+              <Text style={[styles.fieldLabel, { marginTop: Spacing.md }]}>SPLIT AMONG</Text>
+              <View style={styles.usersGrid}>
+                {allUsers.map((u) => {
+                  const selected = selectedUsers.includes(u.id);
+                  const initials = (u.full_name || 'T').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
+                  return (
+                    <TouchableOpacity
+                      key={u.id}
+                      onPress={() => toggleUser(u.id)}
+                      style={[styles.userChip, selected && styles.userChipSelected]}
+                    >
+                      <View style={[styles.userChipAvatar, !selected && { backgroundColor: Colors.surfaceBg }]}>
+                        {selected ? (
+                          <LinearGradient colors={[Colors.goldLight, Colors.goldDark]} style={styles.userChipAvatar}>
+                            <Text style={styles.userChipInitialsSelected}>{initials}</Text>
+                          </LinearGradient>
+                        ) : (
+                          <Text style={styles.userChipInitials}>{initials}</Text>
+                        )}
+                      </View>
+                      <Text style={[styles.userChipName, selected && styles.userChipNameSelected]} numberOfLines={1}>
+                        {u.full_name?.split(' ')[0]}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Split type */}
+              {selectedUsers.length > 0 && (
+                <>
+                  <Text style={[styles.fieldLabel, { marginTop: Spacing.md }]}>SPLIT TYPE</Text>
+                  <View style={styles.splitTypeRow}>
+                    {(['equal', 'percentage', 'custom'] as SplitType[]).map((t) => (
+                      <TouchableOpacity
+                        key={t}
+                        onPress={() => setSplitType(t)}
+                        style={[styles.splitTypeBtn, splitType === t && styles.splitTypeBtnActive]}
+                      >
+                        <Text style={[styles.splitTypeBtnText, splitType === t && styles.splitTypeBtnTextActive]}>
+                          {t === 'equal' ? '⚖️ Equal' : t === 'percentage' ? '% Split' : '✏️ Custom'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {splitType === 'equal' && usdPreview !== null && (
+                    <Text style={styles.equalPreview}>
+                      ${(usdPreview / selectedUsers.length).toFixed(2)} per person
+                    </Text>
+                  )}
+
+                  {splitType === 'custom' && selectedUsers.map((uid) => {
+                    const name = allUsers.find((u) => u.id === uid)?.full_name?.split(' ')[0] || uid;
+                    return (
+                      <GoldInput
+                        key={uid}
+                        label={`${name}'s amount (USD)`}
+                        placeholder="0.00"
+                        value={customAmounts[uid] || ''}
+                        onChangeText={(val) => setCustomAmounts((prev) => ({ ...prev, [uid]: val }))}
+                        keyboardType="decimal-pad"
+                      />
+                    );
+                  })}
+
+                  {splitType === 'percentage' && selectedUsers.map((uid) => {
+                    const name = allUsers.find((u) => u.id === uid)?.full_name?.split(' ')[0] || uid;
+                    return (
+                      <GoldInput
+                        key={uid}
+                        label={`${name}'s %`}
+                        placeholder="0"
+                        value={customPercentages[uid] || ''}
+                        onChangeText={(val) => setCustomPercentages((prev) => ({ ...prev, [uid]: val }))}
+                        keyboardType="decimal-pad"
+                        suffix="%"
+                      />
+                    );
+                  })}
+                </>
+              )}
+
+              <GoldInput
+                label="Notes (optional)"
+                placeholder="Any notes about this expense..."
+                value={notes}
+                onChangeText={setNotes}
+                multiline
+                numberOfLines={3}
+                containerStyle={{ marginTop: Spacing.md }}
+              />
+
+              <GoldButton
+                title="Save Expense"
+                onPress={handleSave}
+                loading={saving}
+                style={{ marginTop: Spacing.lg }}
+                size="lg"
+              />
+
+              <View style={{ height: Spacing.xl }} />
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: Colors.black },
+  summary: {
+    flexDirection: 'row',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderColor,
+  },
+  summaryItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryLabel: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  summaryValue: {
+    color: Colors.textPrimary,
+    fontSize: Typography.sizes.lg,
+    fontWeight: '800',
+  },
+  summaryDivider: {
+    width: 1,
+    backgroundColor: Colors.borderColor,
+    marginVertical: Spacing.xs,
+  },
+  filterScroll: {
+    maxHeight: 54,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderColor,
+  },
+  filterRow: {
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+    alignItems: 'center',
+  },
+  filterChip: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+    backgroundColor: Colors.surfaceBg,
+  },
+  filterActive: {
+    backgroundColor: Colors.gold,
+    borderColor: Colors.gold,
+  },
+  filterText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+  },
+  filterTextActive: {
+    color: Colors.black,
+  },
+  list: {
+    padding: Spacing.base,
+    gap: Spacing.sm,
+  },
+  expenseCard: {
+    gap: Spacing.sm,
+  },
+  expenseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  catBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  catIcon: { fontSize: 22 },
+  expenseInfo: { flex: 1 },
+  expenseTitle: {
+    color: Colors.textPrimary,
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  expenseMeta: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+  },
+  originalCurrency: {
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
+  },
+  expenseAmounts: {
+    alignItems: 'flex-end',
+  },
+  expenseTotal: {
+    color: Colors.textPrimary,
+    fontSize: Typography.sizes.md,
+    fontWeight: '800',
+  },
+  mySplit: {
+    color: Colors.warning,
+    fontSize: Typography.sizes.xs,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  settled: { color: Colors.success },
+  splitPreview: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    flexWrap: 'wrap',
+    paddingTop: Spacing.xs,
+  },
+  splitChip: {
+    backgroundColor: Colors.surfaceBg,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+  },
+  splitChipText: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+  },
+  moreSplits: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+    alignSelf: 'center',
+  },
+  // Modal styles
+  modal: {
+    flex: 1,
+    backgroundColor: Colors.black,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: Spacing.xl,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderColor,
+  },
+  modalTitle: {
+    color: Colors.textPrimary,
+    fontSize: Typography.sizes.xl,
+    fontWeight: '800',
+  },
+  modalClose: {
+    color: Colors.textSecondary,
+    fontSize: 22,
+    fontWeight: '600',
+  },
+  modalScroll: {
+    padding: Spacing.xl,
+  },
+  fieldLabel: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.xs,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: Spacing.sm,
+  },
+  amountRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    alignItems: 'flex-start',
+    marginBottom: Spacing.xs,
+  },
+  currencyPicker: {
+    gap: Spacing.xs,
+  },
+  currencyChip: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+    backgroundColor: Colors.surfaceBg,
+    minWidth: 48,
+    alignItems: 'center',
+  },
+  currencyActive: {
+    backgroundColor: Colors.gold + '20',
+    borderColor: Colors.gold,
+  },
+  currencyText: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+    fontWeight: '700',
+  },
+  currencyTextActive: { color: Colors.gold },
+  usdPreview: {
+    color: Colors.gold,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+    marginBottom: Spacing.md,
+  },
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+    backgroundColor: Colors.surfaceBg,
+  },
+  categoryIcon: { fontSize: 16 },
+  categoryLabel: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+  },
+  usersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  userChip: {
+    alignItems: 'center',
+    width: 64,
+    padding: Spacing.xs,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+    backgroundColor: Colors.surfaceBg,
+  },
+  userChipSelected: {
+    borderColor: Colors.gold + '60',
+    backgroundColor: Colors.gold + '10',
+  },
+  userChipAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surfaceBg,
+    marginBottom: 4,
+  },
+  userChipInitials: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '700',
+  },
+  userChipInitialsSelected: {
+    color: Colors.black,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '800',
+  },
+  userChipName: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+    textAlign: 'center',
+  },
+  userChipNameSelected: {
+    color: Colors.gold,
+    fontWeight: '600',
+  },
+  splitTypeRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  splitTypeBtn: {
+    flex: 1,
+    paddingVertical: Spacing.sm,
+    alignItems: 'center',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+    backgroundColor: Colors.surfaceBg,
+  },
+  splitTypeBtnActive: {
+    backgroundColor: Colors.gold + '20',
+    borderColor: Colors.gold,
+  },
+  splitTypeBtnText: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+    fontWeight: '700',
+  },
+  splitTypeBtnTextActive: {
+    color: Colors.gold,
+  },
+  equalPreview: {
+    color: Colors.gold,
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: Spacing.base,
+  },
+});

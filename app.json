@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Andretta's 40th Expedition",
+    "slug": "andretta-40th-expedition",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0A0A0A",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.expedition.andretta40th",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera is used to scan receipts and capture trip memories.",
+        "NSPhotoLibraryUsageDescription": "Photo library access is used to select receipt images and trip photos.",
+        "NSLocationWhenInUseUsageDescription": "Location is used to show local emergency services."
+      }
+    },
+    "android": {
+      "package": "com.expedition.andretta40th",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0A0A",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Andretta's Expedition to access your camera to scan receipts."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Andretta's Expedition to access your photos."
+        }
+      ],
+      "expo-secure-store",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "andretta-40th-expedition"
+      }
+    }
+  }
+}
