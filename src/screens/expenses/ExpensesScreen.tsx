@@ -7,8 +7,6 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  Switch,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -21,7 +19,7 @@ import { GoldInput } from '../../components/common/GoldInput';
 import { EmptyState } from '../../components/common/EmptyState';
 import { useTripStore } from '../../store/tripStore';
 import { useAuthStore } from '../../store/authStore';
-import { Expense, ExpenseCategory, SplitType, EXPENSE_CATEGORIES, CURRENCIES } from '../../types';
+import { Expense, ExpenseCategory, SplitType, ExpenseParticipant, EXPENSE_CATEGORIES, CURRENCIES } from '../../types';
 import { convertToUSD, formatCurrency } from '../../services/currencyService';
 import { format } from 'date-fns';
 
@@ -36,7 +34,6 @@ export function ExpensesScreen({ navigation, route }: Props) {
   const [showModal, setShowModal] = useState(route?.params?.openAdd || false);
   const [filterCategory, setFilterCategory] = useState<ExpenseCategory | 'all'>('all');
 
-  // New expense form state
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState('USD');
@@ -49,6 +46,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
   const [saving, setSaving] = useState(false);
   const [converting, setConverting] = useState(false);
   const [usdPreview, setUsdPreview] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
     fetchExpenses();
@@ -94,39 +92,41 @@ export function ExpensesScreen({ navigation, route }: Props) {
     setCustomPercentages({});
     setNotes('');
     setUsdPreview(null);
+    setErrorMsg('');
   };
 
   const handleSave = async () => {
-    if (!title.trim()) return Alert.alert('Required', 'Please enter an expense title.');
-    if (!amount || isNaN(parseFloat(amount))) return Alert.alert('Required', 'Please enter a valid amount.');
-    if (selectedUsers.length === 0) return Alert.alert('Required', 'Select at least one person to split with.');
+    if (!title.trim()) { setErrorMsg('Please enter an expense title.'); return; }
+    if (!amount || isNaN(parseFloat(amount))) { setErrorMsg('Please enter a valid amount.'); return; }
+    if (selectedUsers.length === 0) { setErrorMsg('Select at least one person to split with.'); return; }
+    setErrorMsg('');
 
     setSaving(true);
     try {
       const rawAmount = parseFloat(amount);
       const { usdAmount, rate } = await convertToUSD(rawAmount, currency);
 
-      let splits = [];
+      let participants: ExpenseParticipant[] = [];
       if (splitType === 'equal') {
         const perPerson = usdAmount / selectedUsers.length;
-        splits = selectedUsers.map((uid) => ({
-          user_id: uid,
+        participants = selectedUsers.map((uid) => ({
+          profile_id: uid,
           amount: Math.round(perPerson * 100) / 100,
           is_settled: uid === user?.id,
         }));
       } else if (splitType === 'percentage') {
-        splits = selectedUsers.map((uid) => {
+        participants = selectedUsers.map((uid) => {
           const pct = parseFloat(customPercentages[uid] || '0') / 100;
           return {
-            user_id: uid,
+            profile_id: uid,
             amount: Math.round(usdAmount * pct * 100) / 100,
             percentage: pct * 100,
             is_settled: uid === user?.id,
           };
         });
       } else {
-        splits = selectedUsers.map((uid) => ({
-          user_id: uid,
+        participants = selectedUsers.map((uid) => ({
+          profile_id: uid,
           amount: parseFloat(customAmounts[uid] || '0'),
           is_settled: uid === user?.id,
         }));
@@ -141,13 +141,15 @@ export function ExpensesScreen({ navigation, route }: Props) {
         exchange_rate: rate,
         paid_by: user?.id || '',
         split_type: splitType,
-        splits,
-        date: new Date().toISOString(),
+        participants,
+        expense_date: new Date().toISOString(),
         notes: notes.trim() || undefined,
       });
 
       setShowModal(false);
       resetForm();
+    } catch {
+      setErrorMsg('Failed to save expense. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -162,7 +164,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
   const renderExpense = ({ item }: { item: Expense }) => {
     const catMeta = EXPENSE_CATEGORIES.find((c) => c.key === item.category)!;
     const paidByName = allUsers.find((u) => u.id === item.paid_by)?.full_name?.split(' ')[0] || 'Someone';
-    const mySplit = item.splits?.find((s) => s.user_id === user?.id);
+    const myParticipant = item.participants?.find((p) => p.profile_id === user?.id);
 
     return (
       <Card style={styles.expenseCard}>
@@ -173,35 +175,35 @@ export function ExpensesScreen({ navigation, route }: Props) {
           <View style={styles.expenseInfo}>
             <Text style={styles.expenseTitle}>{item.title}</Text>
             <Text style={styles.expenseMeta}>
-              {format(new Date(item.date), 'MMM d')} · Paid by {paidByName}
-              {item.original_currency !== 'USD' && (
+              {format(new Date(item.expense_date), 'MMM d')} · Paid by {paidByName}
+              {item.original_currency !== 'USD' && item.original_amount && (
                 <Text style={styles.originalCurrency}>
-                  {' '}({formatCurrency(item.original_amount || 0, item.original_currency)})
+                  {' '}({formatCurrency(item.original_amount, item.original_currency)})
                 </Text>
               )}
             </Text>
           </View>
           <View style={styles.expenseAmounts}>
             <Text style={styles.expenseTotal}>${item.amount_usd.toFixed(2)}</Text>
-            {mySplit && (
-              <Text style={[styles.mySplit, mySplit.is_settled && styles.settled]}>
-                {mySplit.is_settled ? '✓ settled' : `you: $${mySplit.amount.toFixed(2)}`}
+            {myParticipant && (
+              <Text style={[styles.mySplit, myParticipant.is_settled && styles.settled]}>
+                {myParticipant.is_settled ? '✓ settled' : `you: $${myParticipant.amount.toFixed(2)}`}
               </Text>
             )}
           </View>
         </View>
-        {item.splits && item.splits.length > 0 && (
+        {item.participants && item.participants.length > 0 && (
           <View style={styles.splitPreview}>
-            {item.splits.slice(0, 4).map((s) => {
-              const name = allUsers.find((u) => u.id === s.user_id)?.full_name?.split(' ')[0] || '?';
+            {item.participants.slice(0, 4).map((p) => {
+              const name = allUsers.find((u) => u.id === p.profile_id)?.full_name?.split(' ')[0] || '?';
               return (
-                <View key={s.user_id} style={styles.splitChip}>
+                <View key={p.profile_id} style={styles.splitChip}>
                   <Text style={styles.splitChipText}>{name}</Text>
                 </View>
               );
             })}
-            {item.splits.length > 4 && (
-              <Text style={styles.moreSplits}>+{item.splits.length - 4}</Text>
+            {item.participants.length > 4 && (
+              <Text style={styles.moreSplits}>+{item.participants.length - 4}</Text>
             )}
           </View>
         )}
@@ -218,11 +220,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
         rightAction={{ icon: '＋', onPress: () => setShowModal(true) }}
       />
 
-      {/* Summary */}
-      <LinearGradient
-        colors={['#1A1200', '#0F0A00']}
-        style={styles.summary}
-      >
+      <LinearGradient colors={['#1A1200', '#0F0A00']} style={styles.summary}>
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>Total Spent</Text>
           <Text style={styles.summaryValue}>${totalSpent.toFixed(2)}</Text>
@@ -233,16 +231,12 @@ export function ExpensesScreen({ navigation, route }: Props) {
           <Text style={styles.summaryValue}>{expenses.length}</Text>
         </View>
         <View style={styles.summaryDivider} />
-        <TouchableOpacity
-          style={styles.summaryItem}
-          onPress={() => navigation.navigate('Balances')}
-        >
+        <TouchableOpacity style={styles.summaryItem} onPress={() => navigation.navigate('Balances')}>
           <Text style={styles.summaryLabel}>My Balance</Text>
           <Text style={[styles.summaryValue, { color: Colors.gold }]}>View →</Text>
         </TouchableOpacity>
       </LinearGradient>
 
-      {/* Category Filter */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -253,9 +247,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
           onPress={() => setFilterCategory('all')}
           style={[styles.filterChip, filterCategory === 'all' && styles.filterActive]}
         >
-          <Text style={[styles.filterText, filterCategory === 'all' && styles.filterTextActive]}>
-            All
-          </Text>
+          <Text style={[styles.filterText, filterCategory === 'all' && styles.filterTextActive]}>All</Text>
         </TouchableOpacity>
         {EXPENSE_CATEGORIES.map((c) => (
           <TouchableOpacity
@@ -270,7 +262,6 @@ export function ExpensesScreen({ navigation, route }: Props) {
         ))}
       </ScrollView>
 
-      {/* Expense List */}
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
@@ -287,7 +278,6 @@ export function ExpensesScreen({ navigation, route }: Props) {
         }
       />
 
-      {/* Add Expense Modal */}
       <Modal visible={showModal} animationType="slide" presentationStyle="pageSheet">
         <View style={styles.modal}>
           <View style={styles.modalHeader}>
@@ -303,10 +293,9 @@ export function ExpensesScreen({ navigation, route }: Props) {
                 label="Description"
                 placeholder="e.g. Dinner at Gold Restaurant"
                 value={title}
-                onChangeText={setTitle}
+                onChangeText={(v) => { setTitle(v); setErrorMsg(''); }}
               />
 
-              {/* Amount + Currency */}
               <Text style={styles.fieldLabel}>AMOUNT</Text>
               <View style={styles.amountRow}>
                 <GoldInput
@@ -320,15 +309,10 @@ export function ExpensesScreen({ navigation, route }: Props) {
                   {Object.keys(CURRENCIES).map((c) => (
                     <TouchableOpacity
                       key={c}
-                      onPress={() => {
-                        setCurrency(c);
-                        if (amount) handleAmountChange(amount);
-                      }}
+                      onPress={() => { setCurrency(c); if (amount) handleAmountChange(amount); }}
                       style={[styles.currencyChip, currency === c && styles.currencyActive]}
                     >
-                      <Text style={[styles.currencyText, currency === c && styles.currencyTextActive]}>
-                        {c}
-                      </Text>
+                      <Text style={[styles.currencyText, currency === c && styles.currencyTextActive]}>{c}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -339,27 +323,20 @@ export function ExpensesScreen({ navigation, route }: Props) {
                 </Text>
               )}
 
-              {/* Category */}
               <Text style={[styles.fieldLabel, { marginTop: Spacing.md }]}>CATEGORY</Text>
               <View style={styles.categoryGrid}>
                 {EXPENSE_CATEGORIES.map((c) => (
                   <TouchableOpacity
                     key={c.key}
                     onPress={() => setCategory(c.key)}
-                    style={[
-                      styles.categoryChip,
-                      category === c.key && { backgroundColor: c.color + '30', borderColor: c.color },
-                    ]}
+                    style={[styles.categoryChip, category === c.key && { backgroundColor: c.color + '30', borderColor: c.color }]}
                   >
                     <Text style={styles.categoryIcon}>{c.icon}</Text>
-                    <Text style={[styles.categoryLabel, category === c.key && { color: c.color }]}>
-                      {c.label}
-                    </Text>
+                    <Text style={[styles.categoryLabel, category === c.key && { color: c.color }]}>{c.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              {/* Split among */}
               <Text style={[styles.fieldLabel, { marginTop: Spacing.md }]}>SPLIT AMONG</Text>
               <View style={styles.usersGrid}>
                 {allUsers.map((u) => {
@@ -368,7 +345,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
                   return (
                     <TouchableOpacity
                       key={u.id}
-                      onPress={() => toggleUser(u.id)}
+                      onPress={() => { toggleUser(u.id); setErrorMsg(''); }}
                       style={[styles.userChip, selected && styles.userChipSelected]}
                     >
                       <View style={[styles.userChipAvatar, !selected && { backgroundColor: Colors.surfaceBg }]}>
@@ -388,7 +365,6 @@ export function ExpensesScreen({ navigation, route }: Props) {
                 })}
               </View>
 
-              {/* Split type */}
               {selectedUsers.length > 0 && (
                 <>
                   <Text style={[styles.fieldLabel, { marginTop: Spacing.md }]}>SPLIT TYPE</Text>
@@ -453,11 +429,17 @@ export function ExpensesScreen({ navigation, route }: Props) {
                 containerStyle={{ marginTop: Spacing.md }}
               />
 
+              {errorMsg ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>⚠️  {errorMsg}</Text>
+                </View>
+              ) : null}
+
               <GoldButton
                 title="Save Expense"
                 onPress={handleSave}
                 loading={saving}
-                style={{ marginTop: Spacing.lg }}
+                style={{ marginTop: Spacing.sm }}
                 size="lg"
               />
 
@@ -479,10 +461,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderColor,
   },
-  summaryItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
+  summaryItem: { flex: 1, alignItems: 'center' },
   summaryLabel: {
     color: Colors.textMuted,
     fontSize: Typography.sizes.xs,
@@ -490,27 +469,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 4,
   },
-  summaryValue: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.lg,
-    fontWeight: '800',
-  },
-  summaryDivider: {
-    width: 1,
-    backgroundColor: Colors.borderColor,
-    marginVertical: Spacing.xs,
-  },
-  filterScroll: {
-    maxHeight: 54,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderColor,
-  },
-  filterRow: {
-    paddingHorizontal: Spacing.base,
-    paddingVertical: Spacing.sm,
-    gap: Spacing.sm,
-    alignItems: 'center',
-  },
+  summaryValue: { color: Colors.textPrimary, fontSize: Typography.sizes.lg, fontWeight: '800' },
+  summaryDivider: { width: 1, backgroundColor: Colors.borderColor, marginVertical: Spacing.xs },
+  filterScroll: { maxHeight: 54, borderBottomWidth: 1, borderBottomColor: Colors.borderColor },
+  filterRow: { paddingHorizontal: Spacing.base, paddingVertical: Spacing.sm, gap: Spacing.sm, alignItems: 'center' },
   filterChip: {
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.xs,
@@ -519,74 +481,23 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderColor,
     backgroundColor: Colors.surfaceBg,
   },
-  filterActive: {
-    backgroundColor: Colors.gold,
-    borderColor: Colors.gold,
-  },
-  filterText: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.sm,
-    fontWeight: '600',
-  },
-  filterTextActive: {
-    color: Colors.black,
-  },
-  list: {
-    padding: Spacing.base,
-    gap: Spacing.sm,
-  },
-  expenseCard: {
-    gap: Spacing.sm,
-  },
-  expenseRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-  },
-  catBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  filterActive: { backgroundColor: Colors.gold, borderColor: Colors.gold },
+  filterText: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, fontWeight: '600' },
+  filterTextActive: { color: Colors.black },
+  list: { padding: Spacing.base, gap: Spacing.sm },
+  expenseCard: { gap: Spacing.sm },
+  expenseRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  catBadge: { width: 44, height: 44, borderRadius: BorderRadius.md, alignItems: 'center', justifyContent: 'center' },
   catIcon: { fontSize: 22 },
   expenseInfo: { flex: 1 },
-  expenseTitle: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.base,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  expenseMeta: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-  },
-  originalCurrency: {
-    color: Colors.textSecondary,
-    fontStyle: 'italic',
-  },
-  expenseAmounts: {
-    alignItems: 'flex-end',
-  },
-  expenseTotal: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.md,
-    fontWeight: '800',
-  },
-  mySplit: {
-    color: Colors.warning,
-    fontSize: Typography.sizes.xs,
-    fontWeight: '600',
-    marginTop: 4,
-  },
+  expenseTitle: { color: Colors.textPrimary, fontSize: Typography.sizes.base, fontWeight: '600', marginBottom: 4 },
+  expenseMeta: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
+  originalCurrency: { color: Colors.textSecondary, fontStyle: 'italic' },
+  expenseAmounts: { alignItems: 'flex-end' },
+  expenseTotal: { color: Colors.textPrimary, fontSize: Typography.sizes.md, fontWeight: '800' },
+  mySplit: { color: Colors.warning, fontSize: Typography.sizes.xs, fontWeight: '600', marginTop: 4 },
   settled: { color: Colors.success },
-  splitPreview: {
-    flexDirection: 'row',
-    gap: Spacing.xs,
-    flexWrap: 'wrap',
-    paddingTop: Spacing.xs,
-  },
+  splitPreview: { flexDirection: 'row', gap: Spacing.xs, flexWrap: 'wrap', paddingTop: Spacing.xs },
   splitChip: {
     backgroundColor: Colors.surfaceBg,
     borderRadius: BorderRadius.full,
@@ -595,20 +506,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.borderColor,
   },
-  splitChipText: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-  },
-  moreSplits: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-    alignSelf: 'center',
-  },
-  // Modal styles
-  modal: {
-    flex: 1,
-    backgroundColor: Colors.black,
-  },
+  splitChipText: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
+  moreSplits: { color: Colors.textMuted, fontSize: Typography.sizes.xs, alignSelf: 'center' },
+  modal: { flex: 1, backgroundColor: Colors.black },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -617,35 +517,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderColor,
   },
-  modalTitle: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.xl,
-    fontWeight: '800',
-  },
-  modalClose: {
-    color: Colors.textSecondary,
-    fontSize: 22,
-    fontWeight: '600',
-  },
-  modalScroll: {
-    padding: Spacing.xl,
-  },
-  fieldLabel: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.xs,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: Spacing.sm,
-  },
-  amountRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    alignItems: 'flex-start',
-    marginBottom: Spacing.xs,
-  },
-  currencyPicker: {
-    gap: Spacing.xs,
-  },
+  modalTitle: { color: Colors.textPrimary, fontSize: Typography.sizes.xl, fontWeight: '800' },
+  modalClose: { color: Colors.textSecondary, fontSize: 22, fontWeight: '600' },
+  modalScroll: { padding: Spacing.xl },
+  fieldLabel: { color: Colors.textSecondary, fontSize: Typography.sizes.xs, fontWeight: '700', letterSpacing: 1, marginBottom: Spacing.sm },
+  amountRow: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start', marginBottom: Spacing.xs },
+  currencyPicker: { gap: Spacing.xs },
   currencyChip: {
     paddingHorizontal: Spacing.sm,
     paddingVertical: 4,
@@ -656,28 +533,11 @@ const styles = StyleSheet.create({
     minWidth: 48,
     alignItems: 'center',
   },
-  currencyActive: {
-    backgroundColor: Colors.gold + '20',
-    borderColor: Colors.gold,
-  },
-  currencyText: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-    fontWeight: '700',
-  },
+  currencyActive: { backgroundColor: Colors.gold + '20', borderColor: Colors.gold },
+  currencyText: { color: Colors.textMuted, fontSize: Typography.sizes.xs, fontWeight: '700' },
   currencyTextActive: { color: Colors.gold },
-  usdPreview: {
-    color: Colors.gold,
-    fontSize: Typography.sizes.sm,
-    fontWeight: '600',
-    marginBottom: Spacing.md,
-  },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
+  usdPreview: { color: Colors.gold, fontSize: Typography.sizes.sm, fontWeight: '600', marginBottom: Spacing.md },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.sm },
   categoryChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -690,17 +550,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceBg,
   },
   categoryIcon: { fontSize: 16 },
-  categoryLabel: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.sm,
-    fontWeight: '600',
-  },
-  usersGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
+  categoryLabel: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, fontWeight: '600' },
+  usersGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.sm },
   userChip: {
     alignItems: 'center',
     width: 64,
@@ -710,10 +561,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderColor,
     backgroundColor: Colors.surfaceBg,
   },
-  userChipSelected: {
-    borderColor: Colors.gold + '60',
-    backgroundColor: Colors.gold + '10',
-  },
+  userChipSelected: { borderColor: Colors.gold + '60', backgroundColor: Colors.gold + '10' },
   userChipAvatar: {
     width: 36,
     height: 36,
@@ -723,30 +571,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceBg,
     marginBottom: 4,
   },
-  userChipInitials: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.sm,
-    fontWeight: '700',
-  },
-  userChipInitialsSelected: {
-    color: Colors.black,
-    fontSize: Typography.sizes.sm,
-    fontWeight: '800',
-  },
-  userChipName: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-    textAlign: 'center',
-  },
-  userChipNameSelected: {
-    color: Colors.gold,
-    fontWeight: '600',
-  },
-  splitTypeRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginBottom: Spacing.md,
-  },
+  userChipInitials: { color: Colors.textMuted, fontSize: Typography.sizes.sm, fontWeight: '700' },
+  userChipInitialsSelected: { color: Colors.black, fontSize: Typography.sizes.sm, fontWeight: '800' },
+  userChipName: { color: Colors.textMuted, fontSize: Typography.sizes.xs, textAlign: 'center' },
+  userChipNameSelected: { color: Colors.gold, fontWeight: '600' },
+  splitTypeRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
   splitTypeBtn: {
     flex: 1,
     paddingVertical: Spacing.sm,
@@ -756,18 +585,9 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderColor,
     backgroundColor: Colors.surfaceBg,
   },
-  splitTypeBtnActive: {
-    backgroundColor: Colors.gold + '20',
-    borderColor: Colors.gold,
-  },
-  splitTypeBtnText: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-    fontWeight: '700',
-  },
-  splitTypeBtnTextActive: {
-    color: Colors.gold,
-  },
+  splitTypeBtnActive: { backgroundColor: Colors.gold + '20', borderColor: Colors.gold },
+  splitTypeBtnText: { color: Colors.textMuted, fontSize: Typography.sizes.xs, fontWeight: '700' },
+  splitTypeBtnTextActive: { color: Colors.gold },
   equalPreview: {
     color: Colors.gold,
     fontSize: Typography.sizes.base,
@@ -775,4 +595,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: Spacing.base,
   },
+  errorBox: {
+    backgroundColor: Colors.error + '18',
+    borderWidth: 1,
+    borderColor: Colors.error + '60',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    marginTop: Spacing.sm,
+  },
+  errorText: { color: Colors.error, fontSize: Typography.sizes.sm, fontWeight: '600', lineHeight: 20 },
 });

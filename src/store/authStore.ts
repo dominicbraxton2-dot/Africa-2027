@@ -43,13 +43,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const isDemoCredentials = trimmedEmail === DEMO_EMAIL && password === DEMO_PASSWORD;
     const noSupabase = !isSupabaseConfigured();
 
-    // Accept demo credentials regardless of Supabase state
     if (isDemoCredentials) {
       set({ user: DEMO_USER, session: { access_token: 'demo' }, isDemoMode: true, loading: false });
       return { error: null };
     }
 
-    // If Supabase isn't configured, reject non-demo credentials with a clear message
     if (noSupabase) {
       return {
         error: {
@@ -59,7 +57,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       };
     }
 
-    // Real Supabase sign-in
     const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (!error && data.session) {
       set({ session: data.session, isDemoMode: false });
@@ -85,6 +82,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     });
     if (!error && data.session) {
       set({ session: data.session, isDemoMode: false });
+      await get().refreshUser();
     }
     return { error };
   },
@@ -104,7 +102,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!authUser) return;
 
     const { data } = await supabase
-      .from('users')
+      .from('profiles')
       .select('*')
       .eq('id', authUser.id)
       .single();
@@ -112,14 +110,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (data) {
       set({ user: data as User });
     } else {
-      const newUser: Partial<User> = {
+      const newProfile: Partial<User> = {
         id: authUser.id,
         email: authUser.email || '',
         full_name: authUser.user_metadata?.full_name || authUser.email || '',
         role: 'traveler',
         created_at: new Date().toISOString(),
       };
-      const { data: created } = await supabase.from('users').insert(newUser).select().single();
+      const { data: created } = await supabase.from('profiles').insert(newProfile).select().single();
       if (created) set({ user: created as User });
     }
   },

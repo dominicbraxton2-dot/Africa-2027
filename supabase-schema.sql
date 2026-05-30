@@ -1,266 +1,248 @@
--- ============================================
--- Andretta's 40th Birthday Expedition
--- Supabase Database Schema
--- Run this in your Supabase SQL Editor
--- ============================================
+-- ============================================================
+-- Andretta's 40th Birthday Expedition — Complete Supabase Schema
+-- Run in Supabase SQL Editor (Dashboard → SQL Editor → New Query)
+-- ============================================================
 
--- Enable pgcrypto for UUID generation
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- ============================================
--- USERS TABLE
--- ============================================
-CREATE TABLE IF NOT EXISTS public.users (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  email TEXT NOT NULL,
-  full_name TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'traveler' CHECK (role IN ('admin', 'traveler')),
-  phone TEXT,
-  instagram TEXT,
-  avatar_url TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ── profiles ────────────────────────────────────────────────
+-- Mirrors auth.users; auto-created on sign-up via trigger.
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id            UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email         TEXT NOT NULL,
+  full_name     TEXT NOT NULL DEFAULT '',
+  role          TEXT NOT NULL DEFAULT 'traveler' CHECK (role IN ('admin','traveler')),
+  phone         TEXT,
+  instagram     TEXT,
+  avatar_url    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "profiles: read all"   ON public.profiles FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "profiles: own write"  ON public.profiles FOR ALL    USING (auth.uid() = id);
 
-ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users can view all users" ON public.users
-  FOR SELECT USING (auth.uid() IS NOT NULL);
-
-CREATE POLICY "Users can update their own profile" ON public.users
-  FOR UPDATE USING (auth.uid() = id);
-
-CREATE POLICY "Users can insert their own profile" ON public.users
-  FOR INSERT WITH CHECK (auth.uid() = id);
-
--- ============================================
--- TRAVELER PROFILES TABLE (sensitive data)
--- ============================================
-CREATE TABLE IF NOT EXISTS public.traveler_profiles (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-  full_name TEXT,
-  passport_number TEXT,
-  nationality TEXT,
-  date_of_birth TEXT,
-  emergency_contact_name TEXT,
-  emergency_contact_relationship TEXT,
-  emergency_contact_phone TEXT,
-  emergency_contact_email TEXT,
-  allergies TEXT,
-  medications TEXT,
-  blood_type TEXT,
-  is_data_encrypted BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ── travelers ────────────────────────────────────────────────
+-- Sensitive per-traveler travel document + emergency info.
+CREATE TABLE IF NOT EXISTS public.travelers (
+  id                           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  profile_id                   UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  passport_number              TEXT,
+  nationality                  TEXT,
+  date_of_birth                TEXT,
+  emergency_contact_name       TEXT,
+  emergency_contact_relation   TEXT,
+  emergency_contact_phone      TEXT,
+  emergency_contact_email      TEXT,
+  allergies                    TEXT,
+  medications                  TEXT,
+  blood_type                   TEXT,
+  dietary_restrictions         TEXT,
+  created_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-ALTER TABLE public.traveler_profiles ENABLE ROW LEVEL SECURITY;
-
--- Only the owner and admins can view profiles
-CREATE POLICY "Users can view their own profile" ON public.traveler_profiles
-  FOR SELECT USING (
-    auth.uid() = user_id OR
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')
+ALTER TABLE public.travelers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "travelers: read own or admin" ON public.travelers FOR SELECT
+  USING (
+    auth.uid() = profile_id OR
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
   );
+CREATE POLICY "travelers: write own" ON public.travelers FOR ALL USING (auth.uid() = profile_id);
 
-CREATE POLICY "Users can upsert their own profile" ON public.traveler_profiles
-  FOR ALL USING (auth.uid() = user_id);
-
--- ============================================
--- TRIP DOCUMENTS TABLE
--- ============================================
-CREATE TABLE IF NOT EXISTS public.trip_documents (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  title TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('flights', 'hotels', 'activities', 'transportation', 'documents')),
-  file_url TEXT NOT NULL,
-  file_name TEXT NOT NULL,
-  file_size BIGINT,
-  uploaded_by UUID REFERENCES public.users(id),
-  destination TEXT CHECK (destination IN ('zanzibar', 'cape_town', 'both')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ── announcements ────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.announcements (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  author_id   UUID NOT NULL REFERENCES public.profiles(id),
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  type        TEXT NOT NULL DEFAULT 'info'
+                CHECK (type IN ('info','warning','emergency','flight','schedule')),
+  pinned      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "announcements: all read"    ON public.announcements FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "announcements: admin write" ON public.announcements FOR ALL
+  USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
 
-ALTER TABLE public.trip_documents ENABLE ROW LEVEL SECURITY;
+-- ── itineraries ──────────────────────────────────────────────
+-- Top-level itinerary document (one per upload / trip segment).
+CREATE TABLE IF NOT EXISTS public.itineraries (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title        TEXT NOT NULL,
+  description  TEXT,
+  destination  TEXT NOT NULL CHECK (destination IN ('zanzibar','cape_town','both')),
+  file_url     TEXT,
+  file_name    TEXT,
+  file_size    BIGINT,
+  category     TEXT NOT NULL DEFAULT 'general'
+                 CHECK (category IN ('flights','hotels','excursions','transportation','general')),
+  start_date   DATE,
+  end_date     DATE,
+  uploaded_by  UUID REFERENCES public.profiles(id),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE public.itineraries ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "itineraries: all read"    ON public.itineraries FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "itineraries: admin write" ON public.itineraries FOR ALL
+  USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
 
-CREATE POLICY "All users can view documents" ON public.trip_documents
-  FOR SELECT USING (auth.uid() IS NOT NULL);
+-- ── itinerary_days ───────────────────────────────────────────
+-- Individual day entries within an itinerary.
+CREATE TABLE IF NOT EXISTS public.itinerary_days (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  itinerary_id   UUID NOT NULL REFERENCES public.itineraries(id) ON DELETE CASCADE,
+  day_date       DATE NOT NULL,
+  day_number     INT  NOT NULL,
+  title          TEXT NOT NULL,
+  description    TEXT,
+  location       TEXT,
+  destination    TEXT NOT NULL CHECK (destination IN ('zanzibar','cape_town','transit')),
+  activities     JSONB DEFAULT '[]',
+  meals          JSONB DEFAULT '{}',
+  accommodation  TEXT,
+  notes          TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE public.itinerary_days ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "itinerary_days: all read"    ON public.itinerary_days FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "itinerary_days: admin write" ON public.itinerary_days FOR ALL
+  USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
 
-CREATE POLICY "Admins can manage documents" ON public.trip_documents
-  FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')
-  );
-
--- ============================================
--- EXPENSES TABLE
--- ============================================
+-- ── expenses ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.expenses (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  title TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('dining', 'transportation', 'excursions', 'shopping', 'lodging', 'tips', 'miscellaneous')),
-  amount_usd DECIMAL(10, 2) NOT NULL,
-  original_amount DECIMAL(14, 2),
-  original_currency TEXT,
-  exchange_rate DECIMAL(14, 6),
-  receipt_url TEXT,
-  receipt_data JSONB,
-  paid_by UUID NOT NULL REFERENCES public.users(id),
-  split_type TEXT NOT NULL CHECK (split_type IN ('equal', 'percentage', 'custom')),
-  destination TEXT CHECK (destination IN ('zanzibar', 'cape_town')),
-  date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  notes TEXT,
-  is_synced BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title             TEXT NOT NULL,
+  category          TEXT NOT NULL DEFAULT 'miscellaneous'
+                      CHECK (category IN ('dining','transportation','excursions','shopping','lodging','tips','miscellaneous')),
+  amount_usd        NUMERIC(12,2) NOT NULL,
+  original_amount   NUMERIC(14,2),
+  original_currency TEXT DEFAULT 'USD',
+  exchange_rate     NUMERIC(14,6),
+  destination       TEXT CHECK (destination IN ('zanzibar','cape_town')),
+  paid_by           UUID NOT NULL REFERENCES public.profiles(id),
+  split_type        TEXT NOT NULL DEFAULT 'equal' CHECK (split_type IN ('equal','percentage','custom')),
+  receipt_url       TEXT,
+  receipt_data      JSONB,
+  notes             TEXT,
+  expense_date      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "expenses: all read"    ON public.expenses FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "expenses: creator write" ON public.expenses FOR INSERT WITH CHECK (auth.uid() = paid_by);
+CREATE POLICY "expenses: admin full"  ON public.expenses FOR ALL
+  USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
 
-CREATE POLICY "All users can view expenses" ON public.expenses
-  FOR SELECT USING (auth.uid() IS NOT NULL);
-
-CREATE POLICY "Users can insert expenses" ON public.expenses
-  FOR INSERT WITH CHECK (auth.uid() = paid_by);
-
-CREATE POLICY "Admins can manage all expenses" ON public.expenses
-  FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')
-  );
-
--- ============================================
--- EXPENSE SPLITS TABLE
--- ============================================
-CREATE TABLE IF NOT EXISTS public.expense_splits (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  expense_id UUID NOT NULL REFERENCES public.expenses(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES public.users(id),
-  amount DECIMAL(10, 2) NOT NULL,
-  percentage DECIMAL(5, 2),
-  is_settled BOOLEAN DEFAULT FALSE,
-  settled_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ── expense_participants ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.expense_participants (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  expense_id  UUID NOT NULL REFERENCES public.expenses(id) ON DELETE CASCADE,
+  profile_id  UUID NOT NULL REFERENCES public.profiles(id),
+  amount      NUMERIC(12,2) NOT NULL,
+  percentage  NUMERIC(5,2),
+  is_settled  BOOLEAN NOT NULL DEFAULT FALSE,
+  settled_at  TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(expense_id, profile_id)
 );
+ALTER TABLE public.expense_participants ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "participants: all read"   ON public.expense_participants FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "participants: insert"     ON public.expense_participants FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "participants: own settle" ON public.expense_participants FOR UPDATE USING (auth.uid() = profile_id);
+CREATE POLICY "participants: admin full" ON public.expense_participants FOR ALL
+  USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
 
-ALTER TABLE public.expense_splits ENABLE ROW LEVEL SECURITY;
+-- ── receipts ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.receipts (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  profile_id  UUID NOT NULL REFERENCES public.profiles(id),
+  expense_id  UUID REFERENCES public.expenses(id) ON DELETE SET NULL,
+  image_url   TEXT NOT NULL,
+  merchant    TEXT,
+  receipt_date DATE,
+  currency    TEXT DEFAULT 'USD',
+  raw_amount  NUMERIC(14,2),
+  usd_amount  NUMERIC(12,2),
+  ocr_data    JSONB,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE public.receipts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "receipts: all read"    ON public.receipts FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "receipts: own insert"  ON public.receipts FOR INSERT WITH CHECK (auth.uid() = profile_id);
+CREATE POLICY "receipts: admin full"  ON public.receipts FOR ALL
+  USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
 
-CREATE POLICY "Users can view all splits" ON public.expense_splits
-  FOR SELECT USING (auth.uid() IS NOT NULL);
-
-CREATE POLICY "Users can insert splits" ON public.expense_splits
-  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
-
-CREATE POLICY "Users can update their own splits" ON public.expense_splits
-  FOR UPDATE USING (auth.uid() = user_id);
-
--- ============================================
--- SETTLEMENTS TABLE
--- ============================================
+-- ── settlements ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.settlements (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  from_user_id UUID NOT NULL REFERENCES public.users(id),
-  to_user_id UUID NOT NULL REFERENCES public.users(id),
-  amount DECIMAL(10, 2) NOT NULL,
-  method TEXT NOT NULL CHECK (method IN ('cash', 'zelle', 'venmo', 'paypal')),
-  date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  notes TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_id     UUID NOT NULL REFERENCES public.profiles(id),
+  to_id       UUID NOT NULL REFERENCES public.profiles(id),
+  amount      NUMERIC(12,2) NOT NULL,
+  method      TEXT NOT NULL DEFAULT 'cash' CHECK (method IN ('cash','zelle','venmo','paypal','other')),
+  notes       TEXT,
+  settled_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 ALTER TABLE public.settlements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "settlements: parties read" ON public.settlements FOR SELECT
+  USING (auth.uid() = from_id OR auth.uid() = to_id OR
+         EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
+CREATE POLICY "settlements: from insert" ON public.settlements FOR INSERT WITH CHECK (auth.uid() = from_id);
 
-CREATE POLICY "Users can view settlements involving them" ON public.settlements
-  FOR SELECT USING (
-    auth.uid() = from_user_id OR
-    auth.uid() = to_user_id OR
-    EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin')
-  );
+-- ── Storage Buckets ──────────────────────────────────────────
+-- Run these in Supabase SQL Editor or via CLI:
+-- INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+-- VALUES
+--   ('itineraries',  'itineraries',  true,  52428800, '{application/pdf,image/*}'),
+--   ('receipts',     'receipts',     false, 10485760, '{image/*}'),
+--   ('avatars',      'avatars',      true,  5242880,  '{image/*}'),
+--   ('memories',     'memories',     false, 52428800, '{image/*,video/*}');
 
-CREATE POLICY "Users can create settlements" ON public.settlements
-  FOR INSERT WITH CHECK (auth.uid() = from_user_id);
+-- ── Triggers & Functions ─────────────────────────────────────
 
--- ============================================
--- MEMORIES TABLE
--- ============================================
-CREATE TABLE IF NOT EXISTS public.memories (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES public.users(id),
-  type TEXT NOT NULL CHECK (type IN ('photo', 'video', 'note')),
-  file_url TEXT,
-  note TEXT,
-  caption TEXT,
-  destination TEXT NOT NULL CHECK (destination IN ('zanzibar', 'cape_town')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE public.memories ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "All users can view memories" ON public.memories
-  FOR SELECT USING (auth.uid() IS NOT NULL);
-
-CREATE POLICY "Users can add their own memories" ON public.memories
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users can delete their own memories" ON public.memories
-  FOR DELETE USING (auth.uid() = user_id);
-
--- ============================================
--- STORAGE BUCKETS
--- Run these in the Supabase dashboard Storage section
--- or via the Supabase CLI
--- ============================================
-
--- Insert public buckets (run in Supabase dashboard or CLI):
--- INSERT INTO storage.buckets (id, name, public) VALUES ('trip-documents', 'trip-documents', true);
--- INSERT INTO storage.buckets (id, name, public) VALUES ('receipts', 'receipts', false);
--- INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true);
--- INSERT INTO storage.buckets (id, name, public) VALUES ('memories', 'memories', false);
-
--- ============================================
--- FUNCTIONS
--- ============================================
-
--- Auto-create user record on signup
+-- Auto-create profile on sign-up
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-  INSERT INTO public.users (id, email, full_name, role)
+  INSERT INTO public.profiles (id, email, full_name, role)
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email),
-    'traveler'
-  );
+    COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email,'@',1)),
+    CASE
+      WHEN lower(NEW.email) = 'charmainebraxton@gmail.com' THEN 'admin'
+      ELSE 'traveler'
+    END
+  )
+  ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
--- Trigger: create user row on auth.users insert
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- Update updated_at timestamp
-CREATE OR REPLACE FUNCTION public.handle_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+-- updated_at helper
+CREATE OR REPLACE FUNCTION public.touch_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+$$;
 
-CREATE TRIGGER traveler_profiles_updated_at
-  BEFORE UPDATE ON public.traveler_profiles
-  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER profiles_updated_at  BEFORE UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+CREATE TRIGGER travelers_updated_at BEFORE UPDATE ON public.travelers
+  FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 
--- ============================================
--- INDEXES
--- ============================================
-CREATE INDEX IF NOT EXISTS idx_expenses_paid_by ON public.expenses(paid_by);
-CREATE INDEX IF NOT EXISTS idx_expenses_date ON public.expenses(date DESC);
-CREATE INDEX IF NOT EXISTS idx_expense_splits_expense_id ON public.expense_splits(expense_id);
-CREATE INDEX IF NOT EXISTS idx_expense_splits_user_id ON public.expense_splits(user_id);
-CREATE INDEX IF NOT EXISTS idx_settlements_from_user ON public.settlements(from_user_id);
-CREATE INDEX IF NOT EXISTS idx_settlements_to_user ON public.settlements(to_user_id);
-CREATE INDEX IF NOT EXISTS idx_memories_user_id ON public.memories(user_id);
-CREATE INDEX IF NOT EXISTS idx_memories_destination ON public.memories(destination);
-CREATE INDEX IF NOT EXISTS idx_documents_category ON public.trip_documents(category);
+-- ── Indexes ──────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_expenses_paid_by      ON public.expenses(paid_by);
+CREATE INDEX IF NOT EXISTS idx_expenses_date         ON public.expenses(expense_date DESC);
+CREATE INDEX IF NOT EXISTS idx_participants_expense  ON public.expense_participants(expense_id);
+CREATE INDEX IF NOT EXISTS idx_participants_profile  ON public.expense_participants(profile_id);
+CREATE INDEX IF NOT EXISTS idx_settlements_from      ON public.settlements(from_id);
+CREATE INDEX IF NOT EXISTS idx_settlements_to        ON public.settlements(to_id);
+CREATE INDEX IF NOT EXISTS idx_itinerary_days_date   ON public.itinerary_days(day_date);
+CREATE INDEX IF NOT EXISTS idx_announcements_pinned  ON public.announcements(pinned, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_receipts_profile      ON public.receipts(profile_id);

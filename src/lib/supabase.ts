@@ -5,7 +5,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
-// Returns true only when real Supabase credentials are injected at build time.
 export function isSupabaseConfigured(): boolean {
   return (
     supabaseUrl.startsWith('https://') &&
@@ -14,8 +13,6 @@ export function isSupabaseConfigured(): boolean {
   );
 }
 
-// On web, Supabase uses its built-in localStorage adapter.
-// On native, we use AsyncStorage so sessions persist across app restarts.
 const authStorage = Platform.OS === 'web' ? undefined : AsyncStorage;
 
 export const supabase = createClient(
@@ -32,18 +29,19 @@ export const supabase = createClient(
 );
 
 export const TABLES = {
-  USERS: 'users',
-  TRAVELER_PROFILES: 'traveler_profiles',
-  DOCUMENTS: 'trip_documents',
+  PROFILES: 'profiles',
+  TRAVELERS: 'travelers',
+  ANNOUNCEMENTS: 'announcements',
+  ITINERARIES: 'itineraries',
+  ITINERARY_DAYS: 'itinerary_days',
   EXPENSES: 'expenses',
-  EXPENSE_SPLITS: 'expense_splits',
+  EXPENSE_PARTICIPANTS: 'expense_participants',
+  RECEIPTS: 'receipts',
   SETTLEMENTS: 'settlements',
-  MEMORIES: 'memories',
-  NOTIFICATIONS: 'notifications',
 };
 
 export const BUCKETS = {
-  DOCUMENTS: 'trip-documents',
+  ITINERARIES: 'itineraries',
   RECEIPTS: 'receipts',
   AVATARS: 'avatars',
   MEMORIES: 'memories',

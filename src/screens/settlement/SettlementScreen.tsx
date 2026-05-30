@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
@@ -31,47 +30,59 @@ interface Props {
 }
 
 export function SettlementScreen({ navigation, route }: Props) {
-  const { allUsers, settlements, addSettlement, fetchAllUsers } = useTripStore();
+  const { allUsers, settlements, addSettlement, fetchAllUsers, fetchSettlements } = useTripStore();
   const { user } = useAuthStore();
 
   const [toUserId, setToUserId] = useState<string>(route?.params?.toUserId || '');
-  const [amount, setAmount] = useState<string>(route?.params?.amount ? String(route.params.amount.toFixed(2)) : '');
+  const [amount, setAmount] = useState<string>(
+    route?.params?.amount ? String(route.params.amount.toFixed(2)) : ''
+  );
   const [method, setMethod] = useState<SettlementMethod>('cash');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
 
   useEffect(() => {
     fetchAllUsers();
+    fetchSettlements();
   }, []);
 
   const toUser = allUsers.find((u) => u.id === toUserId);
   const otherUsers = allUsers.filter((u) => u.id !== user?.id);
 
   const mySettlements = settlements.filter(
-    (s) => s.from_user_id === user?.id || s.to_user_id === user?.id
+    (s) => s.from_id === user?.id || s.to_id === user?.id
   );
 
   const handleSettle = async () => {
-    if (!toUserId) return Alert.alert('Required', 'Select who you are paying.');
+    if (!toUserId) { setErrorMsg('Select who you are paying.'); return; }
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      return Alert.alert('Required', 'Enter a valid amount.');
+      setErrorMsg('Enter a valid amount greater than zero.');
+      return;
     }
+    setErrorMsg('');
 
     setSaving(true);
     try {
       await addSettlement({
-        from_user_id: user?.id || '',
-        to_user_id: toUserId,
+        from_id: user?.id || '',
+        to_id: toUserId,
         amount: parseFloat(amount),
         method,
-        date: new Date().toISOString(),
+        settled_at: new Date().toISOString(),
         notes: notes.trim() || undefined,
       });
 
-      Alert.alert('✅ Payment Recorded', `$${parseFloat(amount).toFixed(2)} paid to ${toUser?.full_name} via ${method}.`, [
-        { text: 'Done', onPress: () => navigation.goBack() },
-      ]);
+      setSuccessMsg(
+        `✅ $${parseFloat(amount).toFixed(2)} paid to ${toUser?.full_name} via ${PAYMENT_METHODS.find((m) => m.key === method)?.label}.`
+      );
+      setAmount('');
+      setNotes('');
+      setToUserId('');
+    } catch {
+      setErrorMsg('Failed to record payment. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -85,11 +96,16 @@ export function SettlementScreen({ navigation, route }: Props) {
         onBack={() => navigation.goBack()}
       />
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
-      >
-        {/* Who are you paying? */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        {successMsg ? (
+          <View style={styles.successBox}>
+            <Text style={styles.successText}>{successMsg}</Text>
+            <TouchableOpacity onPress={() => setSuccessMsg('')}>
+              <Text style={styles.dismissText}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         <Text style={styles.sectionLabel}>PAYING TO</Text>
         <ScrollView
           horizontal
@@ -103,14 +119,11 @@ export function SettlementScreen({ navigation, route }: Props) {
             return (
               <TouchableOpacity
                 key={u.id}
-                onPress={() => setToUserId(u.id)}
+                onPress={() => { setToUserId(u.id); setErrorMsg(''); }}
                 style={styles.userOption}
               >
                 {selected ? (
-                  <LinearGradient
-                    colors={[Colors.goldLight, Colors.goldDark]}
-                    style={styles.userAvatar}
-                  >
+                  <LinearGradient colors={[Colors.goldLight, Colors.goldDark]} style={styles.userAvatar}>
                     <Text style={styles.userInitialsSelected}>{initials}</Text>
                   </LinearGradient>
                 ) : (
@@ -126,17 +139,15 @@ export function SettlementScreen({ navigation, route }: Props) {
           })}
         </ScrollView>
 
-        {/* Amount */}
         <GoldInput
           label="Amount (USD)"
           placeholder="0.00"
           value={amount}
-          onChangeText={setAmount}
+          onChangeText={(v) => { setAmount(v); setErrorMsg(''); }}
           keyboardType="decimal-pad"
           icon="💵"
         />
 
-        {/* Payment Method */}
         <Text style={styles.sectionLabel}>PAYMENT METHOD</Text>
         <View style={styles.methodsGrid}>
           {PAYMENT_METHODS.map((m) => (
@@ -160,7 +171,6 @@ export function SettlementScreen({ navigation, route }: Props) {
           numberOfLines={2}
         />
 
-        {/* Summary */}
         {toUser && amount && parseFloat(amount) > 0 && (
           <Card variant="gold" style={styles.summary}>
             <Text style={styles.summaryLabel}>Payment Summary</Text>
@@ -178,6 +188,12 @@ export function SettlementScreen({ navigation, route }: Props) {
           </Card>
         )}
 
+        {errorMsg ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠️  {errorMsg}</Text>
+          </View>
+        ) : null}
+
         <GoldButton
           title="Record Payment"
           onPress={handleSettle}
@@ -186,7 +202,6 @@ export function SettlementScreen({ navigation, route }: Props) {
           size="lg"
         />
 
-        {/* Payment History */}
         <TouchableOpacity
           style={styles.historyToggle}
           onPress={() => setShowHistory(!showHistory)}
@@ -202,24 +217,22 @@ export function SettlementScreen({ navigation, route }: Props) {
               <Text style={styles.noHistory}>No payments recorded yet.</Text>
             ) : (
               mySettlements.map((s) => {
-                const isFrom = s.from_user_id === user?.id;
+                const isFrom = s.from_id === user?.id;
                 const otherPerson = allUsers.find((u) =>
-                  u.id === (isFrom ? s.to_user_id : s.from_user_id)
+                  u.id === (isFrom ? s.to_id : s.from_id)
                 )?.full_name || 'Unknown';
                 const methodMeta = PAYMENT_METHODS.find((m) => m.key === s.method);
 
                 return (
                   <Card key={s.id} style={styles.historyCard}>
                     <View style={styles.historyRow}>
-                      <Text style={styles.historyIcon}>
-                        {isFrom ? '↗️' : '↙️'}
-                      </Text>
+                      <Text style={styles.historyIcon}>{isFrom ? '↗️' : '↙️'}</Text>
                       <View style={styles.historyInfo}>
                         <Text style={styles.historyLabel}>
                           {isFrom ? `Paid ${otherPerson}` : `Received from ${otherPerson}`}
                         </Text>
                         <Text style={styles.historyDate}>
-                          {format(new Date(s.date), 'MMM d, yyyy')} · {methodMeta?.icon} {methodMeta?.label}
+                          {format(new Date(s.settled_at), 'MMM d, yyyy')} · {methodMeta?.icon} {methodMeta?.label}
                         </Text>
                         {s.notes && <Text style={styles.historyNotes}>{s.notes}</Text>}
                       </View>
@@ -242,9 +255,20 @@ export function SettlementScreen({ navigation, route }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.black },
-  scroll: {
-    padding: Spacing.base,
+  scroll: { padding: Spacing.base },
+  successBox: {
+    backgroundColor: Colors.success + '18',
+    borderWidth: 1,
+    borderColor: Colors.success + '60',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.base,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
+  successText: { color: Colors.success, fontSize: Typography.sizes.sm, fontWeight: '600', flex: 1 },
+  dismissText: { color: Colors.textMuted, fontSize: Typography.sizes.sm, marginLeft: Spacing.sm },
   sectionLabel: {
     color: Colors.textSecondary,
     fontSize: Typography.sizes.xs,
@@ -253,17 +277,9 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
     marginTop: Spacing.base,
   },
-  usersScroll: {
-    marginBottom: Spacing.xl,
-  },
-  usersRow: {
-    gap: Spacing.md,
-    paddingVertical: Spacing.xs,
-  },
-  userOption: {
-    alignItems: 'center',
-    width: 64,
-  },
+  usersScroll: { marginBottom: Spacing.xl },
+  usersRow: { gap: Spacing.md, paddingVertical: Spacing.xs },
+  userOption: { alignItems: 'center', width: 64 },
   userAvatar: {
     width: 52,
     height: 52,
@@ -277,31 +293,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.borderColor,
   },
-  userInitials: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.md,
-    fontWeight: '700',
-  },
-  userInitialsSelected: {
-    color: Colors.black,
-    fontSize: Typography.sizes.md,
-    fontWeight: '800',
-  },
-  userName: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-    textAlign: 'center',
-  },
-  userNameSelected: {
-    color: Colors.gold,
-    fontWeight: '700',
-  },
-  methodsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-    marginBottom: Spacing.xl,
-  },
+  userInitials: { color: Colors.textMuted, fontSize: Typography.sizes.md, fontWeight: '700' },
+  userInitialsSelected: { color: Colors.black, fontSize: Typography.sizes.md, fontWeight: '800' },
+  userName: { color: Colors.textMuted, fontSize: Typography.sizes.xs, textAlign: 'center' },
+  userNameSelected: { color: Colors.gold, fontWeight: '700' },
+  methodsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.xl },
   methodCard: {
     width: '47%',
     flexDirection: 'row',
@@ -314,15 +310,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceBg,
   },
   methodIcon: { fontSize: 24 },
-  methodLabel: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.md,
-    fontWeight: '700',
-  },
-  summary: {
-    gap: Spacing.xs,
-    marginVertical: Spacing.base,
-  },
+  methodLabel: { color: Colors.textSecondary, fontSize: Typography.sizes.md, fontWeight: '700' },
+  summary: { gap: Spacing.xs, marginVertical: Spacing.base },
   summaryLabel: {
     color: Colors.gold,
     fontSize: Typography.sizes.sm,
@@ -331,14 +320,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: Spacing.xs,
   },
-  summaryLine: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.base,
+  summaryLine: { color: Colors.textSecondary, fontSize: Typography.sizes.base },
+  summaryHighlight: { color: Colors.textPrimary, fontWeight: '700' },
+  errorBox: {
+    backgroundColor: Colors.error + '18',
+    borderWidth: 1,
+    borderColor: Colors.error + '60',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    marginTop: Spacing.sm,
   },
-  summaryHighlight: {
-    color: Colors.textPrimary,
-    fontWeight: '700',
-  },
+  errorText: { color: Colors.error, fontSize: Typography.sizes.sm, fontWeight: '600' },
   historyToggle: {
     paddingVertical: Spacing.base,
     alignItems: 'center',
@@ -346,46 +339,15 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.borderColor,
     marginTop: Spacing.xl,
   },
-  historyToggleText: {
-    color: Colors.gold,
-    fontSize: Typography.sizes.base,
-    fontWeight: '600',
-  },
-  historyList: {
-    gap: Spacing.sm,
-  },
-  noHistory: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.base,
-    textAlign: 'center',
-    paddingVertical: Spacing.base,
-  },
+  historyToggleText: { color: Colors.gold, fontSize: Typography.sizes.base, fontWeight: '600' },
+  historyList: { gap: Spacing.sm },
+  noHistory: { color: Colors.textMuted, fontSize: Typography.sizes.base, textAlign: 'center', paddingVertical: Spacing.base },
   historyCard: {},
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.md,
-  },
+  historyRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md },
   historyIcon: { fontSize: 22 },
   historyInfo: { flex: 1 },
-  historyLabel: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.base,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  historyDate: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-  },
-  historyNotes: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.xs,
-    fontStyle: 'italic',
-    marginTop: 4,
-  },
-  historyAmount: {
-    fontSize: Typography.sizes.lg,
-    fontWeight: '800',
-  },
+  historyLabel: { color: Colors.textPrimary, fontSize: Typography.sizes.base, fontWeight: '600', marginBottom: 4 },
+  historyDate: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
+  historyNotes: { color: Colors.textSecondary, fontSize: Typography.sizes.xs, fontStyle: 'italic', marginTop: 4 },
+  historyAmount: { fontSize: Typography.sizes.lg, fontWeight: '800' },
 });

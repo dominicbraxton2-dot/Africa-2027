@@ -5,8 +5,8 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Switch,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
@@ -16,7 +16,6 @@ import { GoldButton } from '../../components/common/GoldButton';
 import { GoldInput } from '../../components/common/GoldInput';
 import { useAuthStore } from '../../store/authStore';
 import { supabase, TABLES } from '../../lib/supabase';
-import { TravelerProfile } from '../../types';
 
 interface Props {
   navigation: any;
@@ -24,16 +23,15 @@ interface Props {
 
 export function ProfileScreen({ navigation }: Props) {
   const { user, signOut, refreshUser } = useAuthStore();
-  const [profile, setProfile] = useState<Partial<TravelerProfile>>({});
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showSensitive, setShowSensitive] = useState(false);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
-  // Contact fields
   const [phone, setPhone] = useState(user?.phone || '');
   const [instagram, setInstagram] = useState(user?.instagram || '');
-
-  // Profile fields
   const [passportNumber, setPassportNumber] = useState('');
   const [nationality, setNationality] = useState('');
   const [dob, setDob] = useState('');
@@ -44,71 +42,67 @@ export function ProfileScreen({ navigation }: Props) {
   const [allergies, setAllergies] = useState('');
   const [medications, setMedications] = useState('');
   const [bloodType, setBloodType] = useState('');
+  const [dietaryRestrictions, setDietaryRestrictions] = useState('');
 
   useEffect(() => {
-    loadProfile();
+    loadTravelerProfile();
   }, [user?.id]);
 
-  const loadProfile = async () => {
+  const loadTravelerProfile = async () => {
     if (!user?.id) return;
     const { data } = await supabase
-      .from(TABLES.TRAVELER_PROFILES)
+      .from(TABLES.TRAVELERS)
       .select('*')
-      .eq('user_id', user.id)
+      .eq('profile_id', user.id)
       .single();
 
     if (data) {
-      setProfile(data);
       setPassportNumber(data.passport_number || '');
       setNationality(data.nationality || '');
       setDob(data.date_of_birth || '');
       setEmergencyName(data.emergency_contact_name || '');
-      setEmergencyRelation(data.emergency_contact_relationship || '');
+      setEmergencyRelation(data.emergency_contact_relation || '');
       setEmergencyPhone(data.emergency_contact_phone || '');
       setEmergencyEmail(data.emergency_contact_email || '');
       setAllergies(data.allergies || '');
       setMedications(data.medications || '');
       setBloodType(data.blood_type || '');
+      setDietaryRestrictions(data.dietary_restrictions || '');
     }
   };
 
   const handleSave = async () => {
     if (!user?.id) return;
     setSaving(true);
+    setSaveError('');
+    setSaveSuccess(false);
     try {
-      // Update user contact info
-      await supabase.from(TABLES.USERS).update({ phone, instagram }).eq('id', user.id);
+      await supabase.from(TABLES.PROFILES).update({ phone, instagram }).eq('id', user.id);
 
-      // Upsert traveler profile
-      await supabase.from(TABLES.TRAVELER_PROFILES).upsert({
-        user_id: user.id,
-        full_name: user.full_name,
+      await supabase.from(TABLES.TRAVELERS).upsert({
+        profile_id: user.id,
         passport_number: passportNumber,
         nationality,
         date_of_birth: dob,
         emergency_contact_name: emergencyName,
-        emergency_contact_relationship: emergencyRelation,
+        emergency_contact_relation: emergencyRelation,
         emergency_contact_phone: emergencyPhone,
         emergency_contact_email: emergencyEmail,
         allergies,
         medications,
         blood_type: bloodType,
-        is_data_encrypted: false,
+        dietary_restrictions: dietaryRestrictions,
       });
 
       await refreshUser();
       setEditMode(false);
-      Alert.alert('✅ Saved', 'Your profile has been updated.');
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch {
+      setSaveError('Failed to save profile. Please try again.');
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleSignOut = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: signOut },
-    ]);
   };
 
   const initials = (user?.full_name || 'T')
@@ -124,13 +118,23 @@ export function ProfileScreen({ navigation }: Props) {
         title="My Profile"
         onBack={() => navigation.goBack()}
         rightAction={editMode
-          ? { label: 'Cancel', onPress: () => setEditMode(false) }
+          ? { label: 'Cancel', onPress: () => { setEditMode(false); setSaveError(''); } }
           : { label: 'Edit', onPress: () => setEditMode(true) }
         }
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        {/* Profile header */}
+        {saveSuccess && (
+          <View style={styles.successBox}>
+            <Text style={styles.successText}>✅ Profile saved successfully.</Text>
+          </View>
+        )}
+        {saveError ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠️  {saveError}</Text>
+          </View>
+        ) : null}
+
         <View style={styles.profileHeader}>
           <LinearGradient
             colors={[Colors.goldLight, Colors.gold, Colors.goldDark]}
@@ -147,7 +151,6 @@ export function ProfileScreen({ navigation }: Props) {
           )}
         </View>
 
-        {/* Contact Info */}
         <Text style={styles.sectionTitle}>Contact Information</Text>
         <Card style={styles.section}>
           {editMode ? (
@@ -163,7 +166,6 @@ export function ProfileScreen({ navigation }: Props) {
           )}
         </Card>
 
-        {/* Travel Documents */}
         <Text style={styles.sectionTitle}>Travel Documents</Text>
         <Card style={styles.section}>
           {editMode ? (
@@ -181,7 +183,6 @@ export function ProfileScreen({ navigation }: Props) {
           )}
         </Card>
 
-        {/* Emergency Contact */}
         <Text style={styles.sectionTitle}>Emergency Contact</Text>
         <Card style={styles.section}>
           {editMode ? (
@@ -201,7 +202,6 @@ export function ProfileScreen({ navigation }: Props) {
           )}
         </Card>
 
-        {/* Medical */}
         <Text style={styles.sectionTitle}>Medical Information</Text>
         <Card style={styles.section}>
           {editMode ? (
@@ -209,17 +209,18 @@ export function ProfileScreen({ navigation }: Props) {
               <GoldInput label="Allergies" placeholder="e.g. Penicillin, shellfish" value={allergies} onChangeText={setAllergies} icon="⚠️" multiline />
               <GoldInput label="Medications" placeholder="Current medications" value={medications} onChangeText={setMedications} icon="💊" multiline />
               <GoldInput label="Blood Type" placeholder="A+, B-, O+, etc." value={bloodType} onChangeText={setBloodType} icon="🩸" />
+              <GoldInput label="Dietary Restrictions" placeholder="Vegetarian, Halal, etc." value={dietaryRestrictions} onChangeText={setDietaryRestrictions} icon="🥗" multiline />
             </>
           ) : (
             <>
               <InfoRow icon="⚠️" label="Allergies" value={allergies || 'None listed'} />
               <InfoRow icon="💊" label="Medications" value={medications || 'None listed'} />
               <InfoRow icon="🩸" label="Blood Type" value={bloodType || 'Not added'} />
+              <InfoRow icon="🥗" label="Dietary" value={dietaryRestrictions || 'None listed'} />
             </>
           )}
         </Card>
 
-        {/* Privacy toggle */}
         {!editMode && (
           <View style={styles.privacyRow}>
             <Text style={styles.privacyLabel}>Show sensitive data</Text>
@@ -232,7 +233,6 @@ export function ProfileScreen({ navigation }: Props) {
           </View>
         )}
 
-        {/* Save button */}
         {editMode && (
           <GoldButton
             title="Save Profile"
@@ -243,16 +243,32 @@ export function ProfileScreen({ navigation }: Props) {
           />
         )}
 
-        {/* Sign Out */}
         <GoldButton
           title="Sign Out"
-          onPress={handleSignOut}
+          onPress={() => setShowSignOutConfirm(true)}
           variant="ghost"
           style={styles.signOut}
         />
 
         <View style={{ height: Spacing.xl }} />
       </ScrollView>
+
+      <Modal visible={showSignOutConfirm} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Sign Out?</Text>
+            <Text style={styles.modalBody}>You will need to sign in again to access the expedition.</Text>
+            <View style={styles.modalActions}>
+              <GoldButton title="Cancel" onPress={() => setShowSignOutConfirm(false)} variant="outline" style={{ flex: 1 }} />
+              <GoldButton
+                title="Sign Out"
+                onPress={() => { setShowSignOutConfirm(false); signOut(); }}
+                style={[{ flex: 1, marginLeft: Spacing.sm }, styles.signOutBtn]}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -288,47 +304,35 @@ const infoStyles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 2,
   },
-  value: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.base,
-  },
+  value: { color: Colors.textPrimary, fontSize: Typography.sizes.base },
 });
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.black },
-  scroll: {
-    padding: Spacing.base,
-    paddingBottom: Spacing['3xl'],
-  },
-  profileHeader: {
-    alignItems: 'center',
-    paddingVertical: Spacing.xl,
+  scroll: { padding: Spacing.base, paddingBottom: Spacing['3xl'] },
+  successBox: {
+    backgroundColor: Colors.success + '18',
+    borderWidth: 1,
+    borderColor: Colors.success + '60',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
     marginBottom: Spacing.base,
   },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.md,
+  successText: { color: Colors.success, fontSize: Typography.sizes.sm, fontWeight: '600' },
+  errorBox: {
+    backgroundColor: Colors.error + '18',
+    borderWidth: 1,
+    borderColor: Colors.error + '60',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.base,
   },
-  avatarText: {
-    color: Colors.black,
-    fontSize: Typography.sizes['2xl'],
-    fontWeight: '900',
-  },
-  name: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.xl,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  email: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.base,
-    marginBottom: Spacing.sm,
-  },
+  errorText: { color: Colors.error, fontSize: Typography.sizes.sm, fontWeight: '600' },
+  profileHeader: { alignItems: 'center', paddingVertical: Spacing.xl, marginBottom: Spacing.base },
+  avatar: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md },
+  avatarText: { color: Colors.black, fontSize: Typography.sizes['2xl'], fontWeight: '900' },
+  name: { color: Colors.textPrimary, fontSize: Typography.sizes.xl, fontWeight: '800', marginBottom: 4 },
+  email: { color: Colors.textSecondary, fontSize: Typography.sizes.base, marginBottom: Spacing.sm },
   adminBadge: {
     backgroundColor: Colors.gold + '20',
     borderWidth: 1,
@@ -338,22 +342,9 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
     marginTop: Spacing.xs,
   },
-  adminBadgeText: {
-    color: Colors.gold,
-    fontSize: Typography.sizes.sm,
-    fontWeight: '700',
-  },
-  sectionTitle: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.base,
-    fontWeight: '700',
-    marginBottom: Spacing.sm,
-    marginTop: Spacing.lg,
-  },
-  section: {
-    gap: 0,
-    padding: Spacing.base,
-  },
+  adminBadgeText: { color: Colors.gold, fontSize: Typography.sizes.sm, fontWeight: '700' },
+  sectionTitle: { color: Colors.textPrimary, fontSize: Typography.sizes.base, fontWeight: '700', marginBottom: Spacing.sm, marginTop: Spacing.lg },
+  section: { gap: 0, padding: Spacing.base },
   privacyRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -366,12 +357,20 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderColor,
     marginTop: Spacing.base,
   },
-  privacyLabel: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.base,
-    fontWeight: '600',
+  privacyLabel: { color: Colors.textSecondary, fontSize: Typography.sizes.base, fontWeight: '600' },
+  signOut: { marginTop: Spacing.xl },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
+  modalBox: {
+    backgroundColor: Colors.cardBg,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+    width: '100%',
+    maxWidth: 360,
   },
-  signOut: {
-    marginTop: Spacing.xl,
-  },
+  modalTitle: { color: Colors.textPrimary, fontSize: Typography.sizes.xl, fontWeight: '800', marginBottom: Spacing.sm },
+  modalBody: { color: Colors.textSecondary, fontSize: Typography.sizes.base, lineHeight: 22, marginBottom: Spacing.xl },
+  modalActions: { flexDirection: 'row' },
+  signOutBtn: { backgroundColor: Colors.error + '20' },
 });

@@ -18,8 +18,7 @@ import { differenceInDays, format, parseISO } from 'date-fns';
 
 const { width } = Dimensions.get('window');
 
-// Trip date: adjust as needed
-const DEPARTURE_DATE = new Date('2027-08-01');
+const DEPARTURE_DATE = new Date('2027-01-14');
 
 const QUICK_ACTIONS = [
   { id: 'itinerary', label: 'Itinerary', icon: '📋', screen: 'Itinerary' },

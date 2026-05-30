@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   Linking,
-  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
@@ -20,9 +19,7 @@ interface Props {
 
 function callNumber(number: string) {
   const clean = number.replace(/\s/g, '');
-  Linking.openURL(`tel:${clean}`).catch(() => {
-    Alert.alert('Error', `Unable to call ${number}. Please dial manually.`);
-  });
+  Linking.openURL(`tel:${clean}`).catch(() => {});
 }
 
 export function EmergencyScreen({ navigation }: Props) {

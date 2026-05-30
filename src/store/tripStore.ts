@@ -1,117 +1,149 @@
 import { create } from 'zustand';
+import { Platform } from 'react-native';
 import { supabase, TABLES, BUCKETS } from '../lib/supabase';
-import { TripDocument, Expense, Settlement, Balance, MemoryItem, ExpenseSplit } from '../types';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Itinerary, Expense, Settlement, Balance, MemoryItem, ExpenseParticipant } from '../types';
+
+// Platform-safe cache using AsyncStorage on native, localStorage on web
+const cache = {
+  async get(key: string): Promise<string | null> {
+    if (Platform.OS === 'web') {
+      try { return localStorage.getItem(key); } catch { return null; }
+    }
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    return AsyncStorage.getItem(key);
+  },
+  async set(key: string, value: string): Promise<void> {
+    if (Platform.OS === 'web') {
+      try { localStorage.setItem(key, value); } catch {}
+      return;
+    }
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    await AsyncStorage.setItem(key, value);
+  },
+};
 
 const CACHE_KEYS = {
-  DOCUMENTS: 'cached_documents',
+  ITINERARIES: 'cached_itineraries',
   EXPENSES: 'cached_expenses',
-  USERS: 'cached_users',
+  PROFILES: 'cached_profiles',
 };
 
 interface TripState {
-  documents: TripDocument[];
+  itineraries: Itinerary[];
   expenses: Expense[];
   settlements: Settlement[];
   balances: Balance[];
   memories: MemoryItem[];
   allUsers: any[];
-  isOnline: boolean;
-  pendingSync: any[];
 
-  // Fetchers
-  fetchDocuments: () => Promise<void>;
+  fetchItineraries: () => Promise<void>;
   fetchExpenses: () => Promise<void>;
   fetchAllUsers: () => Promise<void>;
   fetchBalances: (currentUserId: string) => Promise<void>;
   fetchMemories: () => Promise<void>;
+  fetchSettlements: () => Promise<void>;
 
-  // Mutations
-  addExpense: (expense: Omit<Expense, 'id' | 'created_at' | 'is_synced'>) => Promise<void>;
+  addExpense: (expense: Omit<Expense, 'id' | 'created_at'> & { participants: ExpenseParticipant[] }) => Promise<void>;
   addSettlement: (settlement: Omit<Settlement, 'id' | 'created_at'>) => Promise<void>;
-  uploadDocument: (file: any, metadata: Partial<TripDocument>) => Promise<void>;
+  uploadItinerary: (file: any, metadata: Partial<Itinerary>) => Promise<void>;
   addMemory: (memory: Omit<MemoryItem, 'id' | 'created_at'>) => Promise<void>;
-  deleteDocument: (id: string) => Promise<void>;
+  deleteItinerary: (id: string) => Promise<void>;
 
-  setIsOnline: (online: boolean) => void;
-  syncPending: () => Promise<void>;
+  // Deprecated aliases kept for backward compat with screens
+  documents: Itinerary[];
+  fetchDocuments: () => Promise<void>;
+  uploadDocument: (file: any, metadata: Partial<Itinerary>) => Promise<void>;
+  deleteDocument: (id: string) => Promise<void>;
 }
 
 export const useTripStore = create<TripState>((set, get) => ({
+  itineraries: [],
   documents: [],
   expenses: [],
   settlements: [],
   balances: [],
   memories: [],
   allUsers: [],
-  isOnline: true,
-  pendingSync: [],
-
-  setIsOnline: (online) => set({ isOnline: online }),
 
   fetchAllUsers: async () => {
-    const { data } = await supabase.from(TABLES.USERS).select('*').order('full_name');
+    const { data } = await supabase
+      .from(TABLES.PROFILES)
+      .select('*')
+      .order('full_name');
     if (data) {
       set({ allUsers: data });
-      await AsyncStorage.setItem(CACHE_KEYS.USERS, JSON.stringify(data));
+      await cache.set(CACHE_KEYS.PROFILES, JSON.stringify(data));
     } else {
-      const cached = await AsyncStorage.getItem(CACHE_KEYS.USERS);
+      const cached = await cache.get(CACHE_KEYS.PROFILES);
       if (cached) set({ allUsers: JSON.parse(cached) });
     }
   },
 
-  fetchDocuments: async () => {
+  fetchItineraries: async () => {
     const { data } = await supabase
-      .from(TABLES.DOCUMENTS)
+      .from(TABLES.ITINERARIES)
       .select('*')
       .order('created_at', { ascending: false });
     if (data) {
-      set({ documents: data as TripDocument[] });
-      await AsyncStorage.setItem(CACHE_KEYS.DOCUMENTS, JSON.stringify(data));
+      set({ itineraries: data as Itinerary[], documents: data as Itinerary[] });
+      await cache.set(CACHE_KEYS.ITINERARIES, JSON.stringify(data));
     } else {
-      const cached = await AsyncStorage.getItem(CACHE_KEYS.DOCUMENTS);
-      if (cached) set({ documents: JSON.parse(cached) });
+      const cached = await cache.get(CACHE_KEYS.ITINERARIES);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        set({ itineraries: parsed, documents: parsed });
+      }
     }
+  },
+
+  fetchDocuments: async () => {
+    return get().fetchItineraries();
   },
 
   fetchExpenses: async () => {
     const { data } = await supabase
       .from(TABLES.EXPENSES)
-      .select('*, splits:expense_splits(*)')
-      .order('date', { ascending: false });
+      .select(`*, participants:${TABLES.EXPENSE_PARTICIPANTS}(*)`)
+      .order('expense_date', { ascending: false });
     if (data) {
       set({ expenses: data as unknown as Expense[] });
-      await AsyncStorage.setItem(CACHE_KEYS.EXPENSES, JSON.stringify(data));
+      await cache.set(CACHE_KEYS.EXPENSES, JSON.stringify(data));
     } else {
-      const cached = await AsyncStorage.getItem(CACHE_KEYS.EXPENSES);
+      const cached = await cache.get(CACHE_KEYS.EXPENSES);
       if (cached) set({ expenses: JSON.parse(cached) });
     }
+  },
+
+  fetchSettlements: async () => {
+    const { data } = await supabase
+      .from(TABLES.SETTLEMENTS)
+      .select('*')
+      .order('settled_at', { ascending: false });
+    if (data) set({ settlements: data as Settlement[] });
   },
 
   fetchBalances: async (currentUserId) => {
     const { expenses, settlements, allUsers } = get();
     const balanceMap: Record<string, number> = {};
 
-    // Calculate from expenses
     for (const expense of expenses) {
-      const splits = expense.splits || [];
-      for (const split of splits) {
-        if (split.user_id === currentUserId && !split.is_settled) {
+      const participants = expense.participants || [];
+      for (const p of participants) {
+        if (p.profile_id === currentUserId && !p.is_settled) {
           if (expense.paid_by !== currentUserId) {
-            balanceMap[expense.paid_by] = (balanceMap[expense.paid_by] || 0) - split.amount;
+            balanceMap[expense.paid_by] = (balanceMap[expense.paid_by] || 0) - p.amount;
           }
-        } else if (expense.paid_by === currentUserId && split.user_id !== currentUserId && !split.is_settled) {
-          balanceMap[split.user_id] = (balanceMap[split.user_id] || 0) + split.amount;
+        } else if (expense.paid_by === currentUserId && p.profile_id !== currentUserId && !p.is_settled) {
+          balanceMap[p.profile_id] = (balanceMap[p.profile_id] || 0) + p.amount;
         }
       }
     }
 
-    // Apply settlements
     for (const settlement of settlements) {
-      if (settlement.from_user_id === currentUserId) {
-        balanceMap[settlement.to_user_id] = (balanceMap[settlement.to_user_id] || 0) + settlement.amount;
-      } else if (settlement.to_user_id === currentUserId) {
-        balanceMap[settlement.from_user_id] = (balanceMap[settlement.from_user_id] || 0) - settlement.amount;
+      if (settlement.from_id === currentUserId) {
+        balanceMap[settlement.to_id] = (balanceMap[settlement.to_id] || 0) + settlement.amount;
+      } else if (settlement.to_id === currentUserId) {
+        balanceMap[settlement.from_id] = (balanceMap[settlement.from_id] || 0) - settlement.amount;
       }
     }
 
@@ -128,59 +160,41 @@ export const useTripStore = create<TripState>((set, get) => ({
 
   fetchMemories: async () => {
     const { data } = await supabase
-      .from(TABLES.MEMORIES)
+      .from('memories')
       .select('*')
       .order('created_at', { ascending: false });
     if (data) set({ memories: data as MemoryItem[] });
   },
 
-  addExpense: async (expense) => {
-    const { isOnline, pendingSync } = get();
-    const newExpense: Expense = {
-      ...expense,
-      id: `local_${Date.now()}`,
-      created_at: new Date().toISOString(),
-      is_synced: false,
-    };
+  addExpense: async (expenseWithParticipants) => {
+    const { participants, ...expenseData } = expenseWithParticipants as any;
 
-    set((state) => ({ expenses: [newExpense, ...state.expenses] }));
+    const { data: created, error } = await supabase
+      .from(TABLES.EXPENSES)
+      .insert(expenseData)
+      .select()
+      .single();
 
-    if (isOnline) {
-      const { splits, ...expenseData } = newExpense;
-      const { data: created, error } = await supabase
-        .from(TABLES.EXPENSES)
-        .insert({ ...expenseData, id: undefined })
-        .select()
-        .single();
+    if (created && !error) {
+      const participantRows = (participants as ExpenseParticipant[]).map((p) => ({
+        expense_id: created.id,
+        profile_id: p.profile_id,
+        amount: p.amount,
+        percentage: p.percentage,
+        is_settled: p.is_settled,
+      }));
 
-      if (created && !error) {
-        const splitsWithExpenseId = splits.map((s) => ({
-          ...s,
-          expense_id: created.id,
-        }));
-        await supabase.from(TABLES.EXPENSE_SPLITS).insert(splitsWithExpenseId);
+      await supabase.from(TABLES.EXPENSE_PARTICIPANTS).insert(participantRows);
 
-        set((state) => ({
-          expenses: state.expenses.map((e) =>
-            e.id === newExpense.id ? { ...created, splits: splitsWithExpenseId, is_synced: true } : e
-          ),
-        }));
-      }
-    } else {
-      set({ pendingSync: [...pendingSync, { type: 'expense', data: newExpense }] });
+      const newExpense: Expense = { ...created, participants: participantRows };
+      set((state) => ({ expenses: [newExpense, ...state.expenses] }));
     }
   },
 
   addSettlement: async (settlement) => {
-    const newSettlement: Settlement = {
-      ...settlement,
-      id: `local_${Date.now()}`,
-      created_at: new Date().toISOString(),
-    };
-
     const { data: created } = await supabase
       .from(TABLES.SETTLEMENTS)
-      .insert({ ...newSettlement, id: undefined })
+      .insert(settlement)
       .select()
       .single();
 
@@ -189,38 +203,45 @@ export const useTripStore = create<TripState>((set, get) => ({
     }
   },
 
-  uploadDocument: async (file, metadata) => {
-    const fileName = `${Date.now()}_${metadata.file_name}`;
+  uploadItinerary: async (file, metadata) => {
+    const fileName = `${Date.now()}_${metadata.file_name || 'document'}`;
     const { data: storageData } = await supabase.storage
-      .from(BUCKETS.DOCUMENTS)
+      .from(BUCKETS.ITINERARIES)
       .upload(fileName, file);
 
     if (storageData) {
       const { data: { publicUrl } } = supabase.storage
-        .from(BUCKETS.DOCUMENTS)
+        .from(BUCKETS.ITINERARIES)
         .getPublicUrl(fileName);
 
-      const doc: Partial<TripDocument> = {
+      const doc: Partial<Itinerary> = {
         ...metadata,
         file_url: publicUrl,
         created_at: new Date().toISOString(),
       };
 
       const { data: created } = await supabase
-        .from(TABLES.DOCUMENTS)
+        .from(TABLES.ITINERARIES)
         .insert(doc)
         .select()
         .single();
 
       if (created) {
-        set((state) => ({ documents: [created as TripDocument, ...state.documents] }));
+        set((state) => ({
+          itineraries: [created as Itinerary, ...state.itineraries],
+          documents: [created as Itinerary, ...state.documents],
+        }));
       }
     }
   },
 
+  uploadDocument: async (file, metadata) => {
+    return get().uploadItinerary(file, metadata);
+  },
+
   addMemory: async (memory) => {
     const { data: created } = await supabase
-      .from(TABLES.MEMORIES)
+      .from('memories')
       .insert({ ...memory, created_at: new Date().toISOString() })
       .select()
       .single();
@@ -230,18 +251,15 @@ export const useTripStore = create<TripState>((set, get) => ({
     }
   },
 
-  deleteDocument: async (id) => {
-    await supabase.from(TABLES.DOCUMENTS).delete().eq('id', id);
-    set((state) => ({ documents: state.documents.filter((d) => d.id !== id) }));
+  deleteItinerary: async (id) => {
+    await supabase.from(TABLES.ITINERARIES).delete().eq('id', id);
+    set((state) => ({
+      itineraries: state.itineraries.filter((d) => d.id !== id),
+      documents: state.documents.filter((d) => d.id !== id),
+    }));
   },
 
-  syncPending: async () => {
-    const { pendingSync } = get();
-    for (const item of pendingSync) {
-      if (item.type === 'expense') {
-        await get().addExpense(item.data);
-      }
-    }
-    set({ pendingSync: [] });
+  deleteDocument: async (id) => {
+    return get().deleteItinerary(id);
   },
 }));

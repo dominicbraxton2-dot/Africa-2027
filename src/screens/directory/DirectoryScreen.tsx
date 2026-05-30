@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Linking,
   TextInput,
-  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
@@ -35,12 +34,12 @@ export function DirectoryScreen({ navigation }: Props) {
   );
 
   const callUser = (phone?: string) => {
-    if (!phone) return Alert.alert('No Number', 'This traveler has not added a phone number.');
+    if (!phone) return;
     Linking.openURL(`tel:${phone.replace(/\s/g, '')}`);
   };
 
   const messageUser = (phone?: string) => {
-    if (!phone) return Alert.alert('No Number', 'This traveler has not added a phone number.');
+    if (!phone) return;
     Linking.openURL(`sms:${phone.replace(/\s/g, '')}`);
   };
 

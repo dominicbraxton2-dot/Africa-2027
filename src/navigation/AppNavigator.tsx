@@ -28,6 +28,7 @@ import { BalancesScreen } from '../screens/balances/BalancesScreen';
 import { SettlementScreen } from '../screens/settlement/SettlementScreen';
 import { MemoryScreen } from '../screens/memory/MemoryScreen';
 import { ProfileScreen } from '../screens/profile/ProfileScreen';
+import { AnnouncementsScreen } from '../screens/announcements/AnnouncementsScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -78,6 +79,7 @@ function MoreMenuScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
 
   const ITEMS = [
+    { icon: '📢', label: 'Announcements', subtitle: 'Trip updates, alerts & notices', screen: 'Announcements' },
     { icon: '📋', label: 'Itinerary', subtitle: 'Flights, hotels & activity schedules', screen: 'Itinerary' },
     { icon: '🆘', label: 'Emergency Center', subtitle: 'Police, ambulance & embassy contacts', screen: 'Emergency' },
     { icon: '👥', label: 'Traveler Directory', subtitle: 'Group contact list', screen: 'Directory' },
@@ -161,6 +163,7 @@ export function AppNavigator() {
             <Stack.Screen name="Balances" component={BalancesScreen} />
             <Stack.Screen name="Settlement" component={SettlementScreen} />
             <Stack.Screen name="Memory" component={MemoryScreen} />
+            <Stack.Screen name="Announcements" component={AnnouncementsScreen} />
           </>
         )}
       </Stack.Navigator>

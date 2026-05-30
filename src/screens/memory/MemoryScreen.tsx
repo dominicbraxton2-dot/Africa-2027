@@ -6,7 +6,6 @@ import {
   FlatList,
   TouchableOpacity,
   Image,
-  Alert,
   TextInput,
   Modal,
   ScrollView,
@@ -71,14 +70,15 @@ export function MemoryScreen({ navigation }: Props) {
 
   const handleSave = async () => {
     if (!pendingImage && !noteText.trim()) {
-      return Alert.alert('Required', 'Please enter a note or select a photo.');
+      setNoteText('');
+      return;
     }
 
     setSaving(true);
     try {
       const type = pendingImage ? 'photo' : 'note';
       await addMemory({
-        user_id: user?.id || '',
+        profile_id: user?.id || '',
         type,
         file_url: pendingImage?.uri,
         note: noteText.trim() || undefined,

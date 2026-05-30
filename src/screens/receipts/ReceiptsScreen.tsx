@@ -6,8 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   Image,
-  Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -29,34 +29,37 @@ export function ReceiptsScreen({ navigation }: Props) {
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [usdAmount, setUsdAmount] = useState<number | null>(null);
   const [exchangeRate, setExchangeRate] = useState<number | null>(null);
+  const [scanError, setScanError] = useState('');
 
   const pickImage = async (source: 'camera' | 'library') => {
-    const result = source === 'camera'
-      ? await ImagePicker.launchCameraAsync({
-          base64: true,
-          quality: 0.8,
-          allowsEditing: true,
-        })
-      : await ImagePicker.launchImageLibraryAsync({
-          base64: true,
-          quality: 0.8,
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        });
+    setScanError('');
+    try {
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({ base64: true, quality: 0.8, allowsEditing: true })
+        : await ImagePicker.launchImageLibraryAsync({
+            base64: true,
+            quality: 0.8,
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          });
 
-    if (!result.canceled && result.assets[0]) {
-      const asset = result.assets[0];
-      setImage(asset.uri);
-      setReceipt(null);
-      setUsdAmount(null);
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        setImage(asset.uri);
+        setReceipt(null);
+        setUsdAmount(null);
 
-      if (asset.base64) {
-        await processReceipt(asset.base64);
+        if (asset.base64) {
+          await processReceipt(asset.base64);
+        }
       }
+    } catch {
+      setScanError('Could not access camera or gallery. Please check permissions.');
     }
   };
 
   const processReceipt = async (base64: string) => {
     setScanning(true);
+    setScanError('');
     try {
       const data = await scanReceiptWithVision(base64);
       setReceipt(data);
@@ -66,8 +69,8 @@ export function ReceiptsScreen({ navigation }: Props) {
         setUsdAmount(usd);
         setExchangeRate(rate);
       }
-    } catch (err) {
-      Alert.alert('Scan Error', 'Unable to scan receipt. Please enter details manually.');
+    } catch {
+      setScanError('Unable to scan receipt. You can enter details manually in the expense form.');
     } finally {
       setScanning(false);
     }
@@ -76,11 +79,7 @@ export function ReceiptsScreen({ navigation }: Props) {
   const handleUseReceipt = () => {
     navigation.navigate('Expenses', {
       openAdd: true,
-      receiptData: {
-        ...receipt,
-        usdAmount,
-        exchangeRate,
-      },
+      receiptData: { ...receipt, usdAmount, exchangeRate },
     });
   };
 
@@ -94,31 +93,18 @@ export function ReceiptsScreen({ navigation }: Props) {
         onBack={() => navigation.goBack()}
       />
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
-      >
-        {/* Camera / Library buttons */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <View style={styles.captureRow}>
-          <TouchableOpacity
-            style={styles.captureBtn}
-            onPress={() => pickImage('camera')}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={[Colors.goldLight, Colors.gold, Colors.goldDark]}
-              style={styles.captureBtnGradient}
-            >
+          <TouchableOpacity style={styles.captureBtn} onPress={() => pickImage('camera')} activeOpacity={0.8}>
+            <LinearGradient colors={[Colors.goldLight, Colors.gold, Colors.goldDark]} style={styles.captureBtnGradient}>
               <Text style={styles.captureIcon}>📷</Text>
-              <Text style={styles.captureBtnText}>Camera</Text>
+              <Text style={styles.captureBtnText}>
+                {Platform.OS === 'web' ? 'Upload Photo' : 'Camera'}
+              </Text>
             </LinearGradient>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.captureBtn}
-            onPress={() => pickImage('library')}
-            activeOpacity={0.8}
-          >
+          <TouchableOpacity style={styles.captureBtn} onPress={() => pickImage('library')} activeOpacity={0.8}>
             <View style={styles.captureBtnOutline}>
               <Text style={styles.captureIcon}>🖼️</Text>
               <Text style={styles.captureBtnOutlineText}>Gallery</Text>
@@ -126,11 +112,15 @@ export function ReceiptsScreen({ navigation }: Props) {
           </TouchableOpacity>
         </View>
 
-        {/* Preview & Results */}
+        {scanError ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠️  {scanError}</Text>
+          </View>
+        ) : null}
+
         {image && (
           <Card variant="gold" style={styles.previewCard}>
             <Image source={{ uri: image }} style={styles.receiptImage} resizeMode="contain" />
-
             {scanning && (
               <View style={styles.scanningOverlay}>
                 <ActivityIndicator color={Colors.gold} size="large" />
@@ -164,13 +154,10 @@ export function ReceiptsScreen({ navigation }: Props) {
           </View>
         )}
 
-        {/* Scanned Results */}
         {receipt && !scanning && (
           <View style={styles.results}>
             <Text style={styles.resultsTitle}>✅ Receipt Detected</Text>
-
             <Card style={styles.resultCard}>
-              {/* Merchant */}
               {receipt.merchant && (
                 <View style={styles.resultRow}>
                   <Text style={styles.resultIcon}>🏪</Text>
@@ -180,8 +167,6 @@ export function ReceiptsScreen({ navigation }: Props) {
                   </View>
                 </View>
               )}
-
-              {/* Date */}
               {receipt.date && (
                 <View style={[styles.resultRow, styles.resultBorder]}>
                   <Text style={styles.resultIcon}>📅</Text>
@@ -191,26 +176,16 @@ export function ReceiptsScreen({ navigation }: Props) {
                   </View>
                 </View>
               )}
-
-              {/* Currency & Amount */}
               {receipt.currency && receipt.total && (
                 <View style={[styles.resultRow, styles.resultBorder]}>
-                  <Text style={styles.resultIcon}>
-                    {currencyInfo?.flag || '💰'}
-                  </Text>
+                  <Text style={styles.resultIcon}>{currencyInfo?.flag || '💰'}</Text>
                   <View style={styles.resultContent}>
                     <Text style={styles.resultLabel}>Original Amount</Text>
-                    <Text style={styles.resultValue}>
-                      {formatCurrency(receipt.total, receipt.currency)}
-                    </Text>
-                    {currencyInfo && (
-                      <Text style={styles.currencyName}>{currencyInfo.name}</Text>
-                    )}
+                    <Text style={styles.resultValue}>{formatCurrency(receipt.total, receipt.currency)}</Text>
+                    {currencyInfo && <Text style={styles.currencyName}>{currencyInfo.name}</Text>}
                   </View>
                 </View>
               )}
-
-              {/* USD Conversion */}
               {usdAmount !== null && (
                 <View style={[styles.resultRow, styles.resultBorder]}>
                   <Text style={styles.resultIcon}>🇺🇸</Text>
@@ -218,24 +193,18 @@ export function ReceiptsScreen({ navigation }: Props) {
                     <Text style={styles.resultLabel}>USD Equivalent</Text>
                     <Text style={styles.usdValue}>${usdAmount.toFixed(2)}</Text>
                     {exchangeRate && receipt.currency !== 'USD' && (
-                      <Text style={styles.rateNote}>
-                        Rate: 1 USD = {exchangeRate.toFixed(4)} {receipt.currency}
-                      </Text>
+                      <Text style={styles.rateNote}>Rate: 1 USD = {exchangeRate.toFixed(4)} {receipt.currency}</Text>
                     )}
                   </View>
                 </View>
               )}
-
-              {/* Line Items */}
               {receipt.line_items && receipt.line_items.length > 0 && (
                 <View style={[styles.lineItems, styles.resultBorder]}>
                   <Text style={styles.lineItemsTitle}>Items</Text>
                   {receipt.line_items.map((item, i) => (
                     <View key={i} style={styles.lineItem}>
                       <Text style={styles.lineItemDesc}>{item.description}</Text>
-                      <Text style={styles.lineItemAmount}>
-                        {formatCurrency(item.amount, receipt.currency)}
-                      </Text>
+                      <Text style={styles.lineItemAmount}>{formatCurrency(item.amount, receipt.currency)}</Text>
                     </View>
                   ))}
                 </View>
@@ -243,14 +212,10 @@ export function ReceiptsScreen({ navigation }: Props) {
             </Card>
 
             <View style={styles.actionRow}>
-              <GoldButton
-                title="Split This Expense"
-                onPress={handleUseReceipt}
-                style={{ flex: 1 }}
-              />
+              <GoldButton title="Split This Expense" onPress={handleUseReceipt} style={{ flex: 1 }} />
               <GoldButton
                 title="Rescan"
-                onPress={() => pickImage('camera')}
+                onPress={() => pickImage('library')}
                 variant="outline"
                 style={{ marginLeft: Spacing.sm }}
               />
@@ -266,24 +231,10 @@ export function ReceiptsScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.black },
-  scroll: {
-    padding: Spacing.base,
-  },
-  captureRow: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginBottom: Spacing.xl,
-  },
-  captureBtn: {
-    flex: 1,
-    borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
-  },
-  captureBtnGradient: {
-    alignItems: 'center',
-    paddingVertical: Spacing.xl,
-    gap: Spacing.sm,
-  },
+  scroll: { padding: Spacing.base },
+  captureRow: { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.base },
+  captureBtn: { flex: 1, borderRadius: BorderRadius.lg, overflow: 'hidden' },
+  captureBtnGradient: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },
   captureBtnOutline: {
     alignItems: 'center',
     paddingVertical: Spacing.xl,
@@ -293,68 +244,32 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.lg,
   },
   captureIcon: { fontSize: 36 },
-  captureBtnText: {
-    color: Colors.black,
-    fontSize: Typography.sizes.md,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  captureBtnOutlineText: {
-    color: Colors.gold,
-    fontSize: Typography.sizes.md,
-    fontWeight: '700',
-  },
-  previewCard: {
-    padding: 0,
-    overflow: 'hidden',
+  captureBtnText: { color: Colors.black, fontSize: Typography.sizes.md, fontWeight: '800', letterSpacing: 0.5 },
+  captureBtnOutlineText: { color: Colors.gold, fontSize: Typography.sizes.md, fontWeight: '700' },
+  errorBox: {
+    backgroundColor: Colors.error + '18',
+    borderWidth: 1,
+    borderColor: Colors.error + '60',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
     marginBottom: Spacing.base,
   },
-  receiptImage: {
-    width: '100%',
-    height: 280,
-    backgroundColor: Colors.surfaceBg,
-  },
+  errorText: { color: Colors.error, fontSize: Typography.sizes.sm, fontWeight: '600' },
+  previewCard: { padding: 0, overflow: 'hidden', marginBottom: Spacing.base },
+  receiptImage: { width: '100%', height: 280, backgroundColor: Colors.surfaceBg },
   scanningOverlay: {
     alignItems: 'center',
     padding: Spacing.xl,
     gap: Spacing.sm,
     backgroundColor: Colors.black + 'CC',
   },
-  scanningText: {
-    color: Colors.gold,
-    fontSize: Typography.sizes.lg,
-    fontWeight: '700',
-  },
-  scanningSubtext: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.sm,
-  },
-  placeholder: {
-    alignItems: 'center',
-    paddingVertical: Spacing['2xl'],
-    paddingHorizontal: Spacing.xl,
-  },
-  placeholderIcon: {
-    fontSize: 72,
-    marginBottom: Spacing.base,
-  },
-  placeholderTitle: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.xl,
-    fontWeight: '800',
-    marginBottom: Spacing.sm,
-  },
-  placeholderText: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.base,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: Spacing.xl,
-  },
-  featureList: {
-    gap: Spacing.sm,
-    alignSelf: 'stretch',
-  },
+  scanningText: { color: Colors.gold, fontSize: Typography.sizes.lg, fontWeight: '700' },
+  scanningSubtext: { color: Colors.textSecondary, fontSize: Typography.sizes.sm },
+  placeholder: { alignItems: 'center', paddingVertical: Spacing['2xl'], paddingHorizontal: Spacing.xl },
+  placeholderIcon: { fontSize: 72, marginBottom: Spacing.base },
+  placeholderTitle: { color: Colors.textPrimary, fontSize: Typography.sizes.xl, fontWeight: '800', marginBottom: Spacing.sm },
+  placeholderText: { color: Colors.textSecondary, fontSize: Typography.sizes.base, textAlign: 'center', lineHeight: 22, marginBottom: Spacing.xl },
+  featureList: { gap: Spacing.sm, alignSelf: 'stretch' },
   featureItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -366,33 +281,12 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderColor,
   },
   featureIcon: { fontSize: 22 },
-  featureLabel: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.base,
-    fontWeight: '500',
-  },
-  results: {
-    gap: Spacing.base,
-  },
-  resultsTitle: {
-    color: Colors.success,
-    fontSize: Typography.sizes.lg,
-    fontWeight: '800',
-  },
-  resultCard: {
-    padding: 0,
-    overflow: 'hidden',
-  },
-  resultRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: Spacing.base,
-    gap: Spacing.md,
-  },
-  resultBorder: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.borderColor,
-  },
+  featureLabel: { color: Colors.textSecondary, fontSize: Typography.sizes.base, fontWeight: '500' },
+  results: { gap: Spacing.base },
+  resultsTitle: { color: Colors.success, fontSize: Typography.sizes.lg, fontWeight: '800' },
+  resultCard: { padding: 0, overflow: 'hidden' },
+  resultRow: { flexDirection: 'row', alignItems: 'flex-start', padding: Spacing.base, gap: Spacing.md },
+  resultBorder: { borderTopWidth: 1, borderTopColor: Colors.borderColor },
   resultIcon: { fontSize: 22, marginTop: 2 },
   resultContent: { flex: 1 },
   resultLabel: {
@@ -403,29 +297,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 4,
   },
-  resultValue: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.md,
-    fontWeight: '700',
-  },
-  currencyName: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.sm,
-    marginTop: 2,
-  },
-  usdValue: {
-    color: Colors.gold,
-    fontSize: Typography.sizes.xl,
-    fontWeight: '900',
-  },
-  rateNote: {
-    color: Colors.textMuted,
-    fontSize: Typography.sizes.xs,
-    marginTop: 4,
-  },
-  lineItems: {
-    padding: Spacing.base,
-  },
+  resultValue: { color: Colors.textPrimary, fontSize: Typography.sizes.md, fontWeight: '700' },
+  currencyName: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, marginTop: 2 },
+  usdValue: { color: Colors.gold, fontSize: Typography.sizes.xl, fontWeight: '900' },
+  rateNote: { color: Colors.textMuted, fontSize: Typography.sizes.xs, marginTop: 4 },
+  lineItems: { padding: Spacing.base },
   lineItemsTitle: {
     color: Colors.textSecondary,
     fontSize: Typography.sizes.xs,
@@ -434,23 +310,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: Spacing.sm,
   },
-  lineItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.xs,
-  },
-  lineItemDesc: {
-    color: Colors.textSecondary,
-    fontSize: Typography.sizes.sm,
-    flex: 1,
-  },
-  lineItemAmount: {
-    color: Colors.textPrimary,
-    fontSize: Typography.sizes.sm,
-    fontWeight: '600',
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
+  lineItem: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: Spacing.xs },
+  lineItemDesc: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, flex: 1 },
+  lineItemAmount: { color: Colors.textPrimary, fontSize: Typography.sizes.sm, fontWeight: '600' },
+  actionRow: { flexDirection: 'row', gap: Spacing.sm },
 });
