@@ -187,3 +187,42 @@ export const ITINERARY_CATEGORIES: Array<{
   { key: 'transportation', icon: '🚗', label: 'Transport', color: '#E8643A' },
   { key: 'general', icon: '📄', label: 'General', color: '#C9A84C' },
 ];
+
+// ── Calendar Events ───────────────────────────────────────────────────────────
+
+export type EventCategory =
+  | 'flight'
+  | 'hotel'
+  | 'excursion'
+  | 'transportation'
+  | 'dining'
+  | 'general';
+
+export interface ItineraryEvent {
+  id: string;
+  title: string;
+  event_date: string; // YYYY-MM-DD
+  start_time?: string; // HH:MM (24h)
+  end_time?: string;
+  location?: string;
+  category: EventCategory;
+  notes?: string;
+  source_document_id?: string;
+  created_by?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export const EVENT_CATEGORIES: Array<{
+  key: EventCategory;
+  label: string;
+  icon: string;
+  color: string;
+}> = [
+  { key: 'flight', label: 'Flight', icon: '✈️', color: '#4A8CE8' },
+  { key: 'hotel', label: 'Hotel', icon: '🏨', color: '#8B6F47' },
+  { key: 'excursion', label: 'Excursion', icon: '🤿', color: '#1B7F8A' },
+  { key: 'transportation', label: 'Transport', icon: '🚗', color: '#E8643A' },
+  { key: 'dining', label: 'Dining', icon: '🍽️', color: '#D88C2D' },
+  { key: 'general', label: 'General', icon: '📅', color: '#C9A84C' },
+];

@@ -24,6 +24,9 @@ import { useTripStore } from '../../store/tripStore';
 import { useAuthStore } from '../../store/authStore';
 import { Itinerary, ItineraryCategory, ITINERARY_CATEGORIES } from '../../types';
 import { format } from 'date-fns';
+import { CalendarView } from './CalendarView';
+import { ScanReviewModal } from './ScanReviewModal';
+import { parseItineraryFile, ParsedEvent, ParseError } from '../../services/itineraryParser';
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'gif', 'webp', 'bmp'];
 
@@ -33,11 +36,14 @@ function isImageFile(filename?: string): boolean {
   return IMAGE_EXTENSIONS.includes(ext);
 }
 
-function isDataOrBlobUrl(url?: string | null): boolean {
-  return !!(url && (url.startsWith('data:') || url.startsWith('blob:')));
+function inferMimeType(filename?: string): string {
+  const ext = filename?.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'pdf') return 'application/pdf';
+  if (['heic', 'heif'].includes(ext)) return 'image/heic';
+  if (ext === 'png') return 'image/png';
+  return 'image/jpeg';
 }
 
-// Small component that gracefully falls back to an icon if the image fails to load
 function DocThumb({ uri, fallbackIcon, fallbackColor }: { uri: string; fallbackIcon: string; fallbackColor: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
@@ -72,6 +78,8 @@ export function ItineraryScreen({ navigation }: Props) {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
 
+  const [activeView, setActiveView] = useState<'documents' | 'calendar'>('documents');
+
   const [selectedCategory, setSelectedCategory] = useState<ItineraryCategory | 'all'>('all');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -82,6 +90,12 @@ export function ItineraryScreen({ navigation }: Props) {
   const [uploadCategory, setUploadCategory] = useState<ItineraryCategory>('general');
   const [uploadDestination, setUploadDestination] = useState<'zanzibar' | 'cape_town' | 'both'>('both');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const [scanningDocId, setScanningDocId] = useState<string | null>(null);
+  const [showScanReview, setShowScanReview] = useState(false);
+  const [parsedEvents, setParsedEvents] = useState<ParsedEvent[]>([]);
+  const [scanDocId, setScanDocId] = useState<string | undefined>(undefined);
+  const [scanError, setScanError] = useState<ParseError | null>(null);
 
   useEffect(() => {
     fetchDocuments();
@@ -96,7 +110,6 @@ export function ItineraryScreen({ navigation }: Props) {
     setUploadError('');
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        // Allow PDFs and all image types including HEIC screenshots
         type: ['application/pdf', 'image/*', 'image/heic', 'image/heif'],
         copyToCacheDirectory: true,
         multiple: false,
@@ -105,7 +118,6 @@ export function ItineraryScreen({ navigation }: Props) {
 
       const asset = result.assets[0];
       setPendingAsset(asset);
-      // Pre-fill title from filename (strip extension)
       setUploadTitle(asset.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '));
       setUploadDescription('');
       setUploadCategory('general');
@@ -165,6 +177,31 @@ export function ItineraryScreen({ navigation }: Props) {
     setConfirmDeleteId(null);
   };
 
+  const handleScan = async (doc: Itinerary) => {
+    if (!doc.file_url) {
+      setScanError('FETCH_FAILED' as ParseError);
+      setParsedEvents([]);
+      setScanDocId(doc.id);
+      setShowScanReview(true);
+      return;
+    }
+    setScanningDocId(doc.id);
+    setScanError(null);
+    try {
+      const events = await parseItineraryFile(null, doc.file_url, inferMimeType(doc.file_name));
+      setParsedEvents(events);
+      setScanDocId(doc.id);
+      setScanError(null);
+    } catch (e: any) {
+      setParsedEvents([]);
+      setScanDocId(doc.id);
+      setScanError((e.code as ParseError) || 'API_ERROR');
+    } finally {
+      setScanningDocId(null);
+      setShowScanReview(true);
+    }
+  };
+
   const canDelete = (doc: Itinerary) =>
     isAdmin || doc.uploaded_by === user?.id;
 
@@ -180,6 +217,7 @@ export function ItineraryScreen({ navigation }: Props) {
     const showImage = isImageFile(item.file_name) && item.file_url && !item.file_url.startsWith('blob:');
     const isLocal = item.id.startsWith('local-');
     const uploader = uploaderName(item.uploaded_by);
+    const isScanning = scanningDocId === item.id;
 
     return (
       <Card style={styles.docCard}>
@@ -238,6 +276,13 @@ export function ItineraryScreen({ navigation }: Props) {
               <Text style={styles.docActionText}>↓</Text>
             </TouchableOpacity>
           )}
+          <TouchableOpacity
+            onPress={() => handleScan(item)}
+            style={[styles.docActionBtn, styles.scanActionBtn]}
+            disabled={isScanning}
+          >
+            <Text style={styles.scanActionText}>{isScanning ? '⏳' : '🔍'}</Text>
+          </TouchableOpacity>
           {canDelete(item) && (
             <TouchableOpacity onPress={() => setConfirmDeleteId(item.id)} style={styles.docDeleteBtn}>
               <Text style={styles.docDeleteText}>×</Text>
@@ -256,58 +301,94 @@ export function ItineraryScreen({ navigation }: Props) {
         onBack={() => navigation.goBack()}
       />
 
-      {/* Category filter */}
-      <View style={styles.filterContainer}>
-        <FlatList
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          data={['all', ...ITINERARY_CATEGORIES.map((c) => c.key)] as (ItineraryCategory | 'all')[]}
-          keyExtractor={(item) => item}
-          contentContainerStyle={styles.filterList}
-          renderItem={({ item }) => {
-            const isSelected = selectedCategory === item;
-            const meta = item === 'all' ? null : ITINERARY_CATEGORIES.find((c) => c.key === item);
-            const label = item === 'all' ? '🗂️ All' : `${meta?.icon} ${meta?.label}`;
-            return (
-              <TouchableOpacity
-                onPress={() => setSelectedCategory(item)}
-                style={[styles.filterChip, isSelected && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>{label}</Text>
-              </TouchableOpacity>
-            );
-          }}
-        />
+      {/* View switcher tabs */}
+      <View style={styles.viewTabs}>
+        <TouchableOpacity
+          onPress={() => setActiveView('documents')}
+          style={[styles.viewTab, activeView === 'documents' && styles.viewTabActive]}
+        >
+          <Text style={[styles.viewTabText, activeView === 'documents' && styles.viewTabTextActive]}>
+            📄 Documents
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setActiveView('calendar')}
+          style={[styles.viewTab, activeView === 'calendar' && styles.viewTabActive]}
+        >
+          <Text style={[styles.viewTabText, activeView === 'calendar' && styles.viewTabTextActive]}>
+            📅 Calendar
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Upload bar — visible to ALL authenticated users */}
-      <View style={styles.uploadBar}>
-        {uploadError ? <Text style={styles.uploadError}>{uploadError}</Text> : null}
-        <GoldButton
-          title={uploading ? 'Uploading…' : '📎  Upload File or Image'}
-          onPress={handlePickFile}
-          loading={uploading}
-          variant="outline"
-          size="sm"
-          style={styles.uploadBtn}
-        />
-      </View>
+      {activeView === 'calendar' ? (
+        <CalendarView onSwitchToDocuments={() => setActiveView('documents')} />
+      ) : (
+        <>
+          {/* Category filter */}
+          <View style={styles.filterContainer}>
+            <FlatList
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              data={['all', ...ITINERARY_CATEGORIES.map((c) => c.key)] as (ItineraryCategory | 'all')[]}
+              keyExtractor={(item) => item}
+              contentContainerStyle={styles.filterList}
+              renderItem={({ item }) => {
+                const isSelected = selectedCategory === item;
+                const meta = item === 'all' ? null : ITINERARY_CATEGORIES.find((c) => c.key === item);
+                const label = item === 'all' ? '🗂️ All' : `${meta?.icon} ${meta?.label}`;
+                return (
+                  <TouchableOpacity
+                    onPress={() => setSelectedCategory(item)}
+                    style={[styles.filterChip, isSelected && styles.filterChipActive]}
+                  >
+                    <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
 
-      {/* Document list */}
-      <FlatList
-        data={filtered}
-        keyExtractor={(item) => item.id}
-        renderItem={renderDocument}
-        contentContainerStyle={styles.list}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <EmptyState
-            icon="📋"
-            title="No Itinerary Documents Yet"
-            subtitle="Upload a file or image to share with the group."
-            action={{ label: 'Upload File or Image', onPress: handlePickFile }}
+          {/* Upload bar */}
+          <View style={styles.uploadBar}>
+            {uploadError ? <Text style={styles.uploadError}>{uploadError}</Text> : null}
+            <GoldButton
+              title={uploading ? 'Uploading…' : '📎  Upload File or Image'}
+              onPress={handlePickFile}
+              loading={uploading}
+              variant="outline"
+              size="sm"
+              style={styles.uploadBtn}
+            />
+          </View>
+
+          {/* Document list */}
+          <FlatList
+            data={filtered}
+            keyExtractor={(item) => item.id}
+            renderItem={renderDocument}
+            contentContainerStyle={styles.list}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <EmptyState
+                icon="📋"
+                title="No Itinerary Documents Yet"
+                subtitle="Upload a file or image to share with the group."
+                action={{ label: 'Upload File or Image', onPress: handlePickFile }}
+              />
+            }
           />
-        }
+        </>
+      )}
+
+      {/* ── Scan Review Modal ── */}
+      <ScanReviewModal
+        visible={showScanReview}
+        onClose={() => setShowScanReview(false)}
+        parsedEvents={parsedEvents}
+        sourceDocId={scanDocId}
+        errorType={scanError}
+        onSaved={() => setActiveView('calendar')}
       />
 
       {/* ── Upload Modal ── */}
@@ -425,6 +506,30 @@ export function ItineraryScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.black },
 
+  viewTabs: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderColor,
+  },
+  viewTab: {
+    flex: 1,
+    paddingVertical: Spacing.sm,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  viewTabActive: {
+    borderBottomColor: Colors.gold,
+  },
+  viewTabText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '700',
+  },
+  viewTabTextActive: {
+    color: Colors.gold,
+  },
+
   filterContainer: {
     paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
@@ -528,6 +633,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   docActionText: { color: Colors.gold, fontSize: Typography.sizes.xs, fontWeight: '700' },
+  scanActionBtn: {
+    backgroundColor: Colors.safariGreen + '20',
+    minWidth: 48,
+  },
+  scanActionText: { fontSize: Typography.sizes.sm },
   docDeleteBtn: {
     width: 28,
     height: 28,

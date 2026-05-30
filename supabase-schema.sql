@@ -197,6 +197,35 @@ CREATE POLICY "settlements: parties read" ON public.settlements FOR SELECT
          EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
 CREATE POLICY "settlements: from insert" ON public.settlements FOR INSERT WITH CHECK (auth.uid() = from_id);
 
+-- ── itinerary_events ─────────────────────────────────────────
+-- Individual calendar events extracted from or added to itineraries.
+CREATE TABLE IF NOT EXISTS public.itinerary_events (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title               TEXT NOT NULL,
+  event_date          DATE NOT NULL,
+  start_time          TEXT,   -- HH:MM 24h
+  end_time            TEXT,   -- HH:MM 24h
+  location            TEXT,
+  category            TEXT NOT NULL DEFAULT 'general'
+                        CHECK (category IN ('flight','hotel','excursion','transportation','dining','general')),
+  notes               TEXT,
+  source_document_id  UUID REFERENCES public.itineraries(id) ON DELETE SET NULL,
+  created_by          TEXT,   -- local user id (not FK, supports offline-first local IDs)
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE public.itinerary_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "itinerary_events: all read"   ON public.itinerary_events FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "itinerary_events: auth write" ON public.itinerary_events FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "itinerary_events: auth update" ON public.itinerary_events FOR UPDATE USING (auth.uid() IS NOT NULL);
+CREATE POLICY "itinerary_events: auth delete" ON public.itinerary_events FOR DELETE USING (auth.uid() IS NOT NULL);
+
+CREATE TRIGGER itinerary_events_updated_at BEFORE UPDATE ON public.itinerary_events
+  FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+
+CREATE INDEX IF NOT EXISTS idx_itinerary_events_date ON public.itinerary_events(event_date);
+CREATE INDEX IF NOT EXISTS idx_itinerary_events_source ON public.itinerary_events(source_document_id);
+
 -- ── Storage Buckets ──────────────────────────────────────────
 -- Run these in Supabase SQL Editor or via CLI:
 -- INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
