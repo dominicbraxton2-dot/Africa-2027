@@ -3,39 +3,16 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { View, StyleSheet, ActivityIndicator, Text } from 'react-native';
-import { supabase } from './src/lib/supabase';
 import { useAuthStore } from './src/store/authStore';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { Colors } from './src/constants/theme';
 
 export default function App() {
-  const { setSession, setLoading, loading, refreshUser, isDemoMode } = useAuthStore();
+  const { initialize, loading } = useAuthStore();
 
   useEffect(() => {
-    // In demo mode the session is managed locally — skip Supabase entirely.
-    if (isDemoMode) {
-      setLoading(false);
-      return;
-    }
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        refreshUser().finally(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        refreshUser().catch(() => {});
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [isDemoMode]);
+    initialize();
+  }, []);
 
   if (loading) {
     return (

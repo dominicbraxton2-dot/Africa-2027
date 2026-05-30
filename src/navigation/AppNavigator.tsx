@@ -15,6 +15,7 @@ import { useAuthStore } from '../store/authStore';
 
 // Auth
 import { LoginScreen } from '../screens/auth/LoginScreen';
+import { ProfileSetupScreen } from '../screens/auth/ProfileSetupScreen';
 
 // Screens
 import { DashboardScreen } from '../screens/dashboard/DashboardScreen';
@@ -181,14 +182,15 @@ function TabNavigator() {
 // ── Root Navigator ────────────────────────────────────────────────────────────
 
 export function AppNavigator() {
-  const { session, isDemoMode } = useAuthStore();
-  const isAuthenticated = !!session || isDemoMode;
+  const { isAuthenticated, needsProfileSetup } = useAuthStore();
 
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!isAuthenticated ? (
           <Stack.Screen name="Login" component={LoginScreen} />
+        ) : needsProfileSetup ? (
+          <Stack.Screen name="ProfileSetup" component={ProfileSetupScreen} />
         ) : (
           <>
             <Stack.Screen name="Main" component={TabNavigator} />

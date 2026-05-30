@@ -1,130 +1,167 @@
 import { create } from 'zustand';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { Platform } from 'react-native';
+import { supabase, isSupabaseConfigured, BUCKETS } from '../lib/supabase';
 import { User } from '../types';
 
-const DEMO_USER: User = {
-  id: 'demo-user-id',
-  email: 'demo@africa2027.com',
-  full_name: 'Demo Traveler',
-  role: 'traveler',
-  created_at: new Date().toISOString(),
+const TRIP_PASSWORD = '40Africa';
+const AUTH_KEY = 'trip_auth_v2';
+
+const storage = {
+  async get(key: string): Promise<string | null> {
+    if (Platform.OS === 'web') {
+      try { return localStorage.getItem(key); } catch { return null; }
+    }
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    return AsyncStorage.getItem(key);
+  },
+  async set(key: string, value: string): Promise<void> {
+    if (Platform.OS === 'web') {
+      try { localStorage.setItem(key, value); } catch {}
+      return;
+    }
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    await AsyncStorage.setItem(key, value);
+  },
+  async remove(key: string): Promise<void> {
+    if (Platform.OS === 'web') {
+      try { localStorage.removeItem(key); } catch {}
+      return;
+    }
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    await AsyncStorage.removeItem(key);
+  },
 };
 
-const DEMO_EMAIL = 'demo@africa2027.com';
-const DEMO_PASSWORD = 'demo1234';
+function generateUserId(): string {
+  return 'local-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now().toString(36);
+}
+
+type PersistedAuth = { isAuthenticated: boolean; needsProfileSetup: boolean; user: User | null };
+
+function saveToStorage(data: PersistedAuth): void {
+  storage.set(AUTH_KEY, JSON.stringify(data)).catch(() => {});
+}
 
 interface AuthState {
+  isAuthenticated: boolean;
+  needsProfileSetup: boolean;
   user: User | null;
-  session: any | null;
   loading: boolean;
+  // Legacy compat — kept so other screens compile without changes
+  session: null;
   isDemoMode: boolean;
-  setUser: (user: User | null) => void;
-  setSession: (session: any | null) => void;
-  setLoading: (loading: boolean) => void;
-  signIn: (email: string, password: string) => Promise<{ error: any }>;
-  signUp: (email: string, password: string, fullName: string) => Promise<{ error: any }>;
+
+  initialize: () => Promise<void>;
+  enterWithPassword: (password: string) => boolean;
+  completeProfileSetup: (name: string, avatarUri?: string | null, avatarFile?: File | null) => Promise<void>;
   signOut: () => Promise<void>;
-  refreshUser: () => Promise<void>;
   updateAvatar: (avatarUrl: string) => void;
+  updateName: (name: string) => void;
+  // No-op kept for compatibility with screens that call it
+  refreshUser: () => Promise<void>;
+  setLoading: (loading: boolean) => void;
+  setSession: (session: any) => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
+  isAuthenticated: false,
+  needsProfileSetup: false,
   user: null,
-  session: null,
   loading: true,
+  session: null,
   isDemoMode: false,
 
-  setUser: (user) => set({ user }),
-  setSession: (session) => set({ session }),
   setLoading: (loading) => set({ loading }),
+  setSession: () => {},
+  refreshUser: async () => {},
 
-  signIn: async (email, password) => {
-    const trimmedEmail = email.trim().toLowerCase();
-
-    const isDemoCredentials = trimmedEmail === DEMO_EMAIL && password === DEMO_PASSWORD;
-    const noSupabase = !isSupabaseConfigured();
-
-    if (isDemoCredentials) {
-      set({ user: DEMO_USER, session: { access_token: 'demo' }, isDemoMode: true, loading: false });
-      return { error: null };
+  initialize: async () => {
+    try {
+      const raw = await storage.get(AUTH_KEY);
+      if (raw) {
+        const saved: PersistedAuth = JSON.parse(raw);
+        set({
+          isAuthenticated: !!saved.isAuthenticated,
+          needsProfileSetup: !!saved.needsProfileSetup,
+          user: saved.user ?? null,
+          isDemoMode: !!saved.isAuthenticated,
+          loading: false,
+        });
+      } else {
+        set({ loading: false });
+      }
+    } catch {
+      set({ loading: false });
     }
-
-    if (noSupabase) {
-      return {
-        error: {
-          message:
-            'Supabase is not connected yet. Use demo@africa2027.com / demo1234 to preview the app.',
-        },
-      };
-    }
-
-    const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    if (!error && data.session) {
-      set({ session: data.session, isDemoMode: false });
-      await get().refreshUser();
-    }
-    return { error };
   },
 
-  signUp: async (email, password, fullName) => {
-    if (!isSupabaseConfigured()) {
-      return {
-        error: {
-          message:
-            'Supabase is not connected yet. Use demo@africa2027.com / demo1234 to preview the app.',
-        },
-      };
+  enterWithPassword: (password: string) => {
+    if (password !== TRIP_PASSWORD) return false;
+    const userId = generateUserId();
+    const user: User = {
+      id: userId,
+      email: '',
+      full_name: '',
+      role: 'traveler',
+      created_at: new Date().toISOString(),
+    };
+    set({ isAuthenticated: true, needsProfileSetup: true, user, isDemoMode: true });
+    saveToStorage({ isAuthenticated: true, needsProfileSetup: true, user });
+    return true;
+  },
+
+  completeProfileSetup: async (name, avatarUri, avatarFile) => {
+    const { user } = get();
+    if (!user) return;
+
+    let avatarUrl: string | undefined;
+
+    if (avatarUri && isSupabaseConfigured()) {
+      try {
+        let blob: Blob;
+        if (avatarFile instanceof File) {
+          blob = avatarFile;
+        } else {
+          const resp = await fetch(avatarUri);
+          blob = await resp.blob();
+        }
+        const ext = blob.type.includes('png') ? 'png' : 'jpg';
+        const path = `${user.id}.${ext}`;
+        const { error } = await supabase.storage
+          .from(BUCKETS.PROFILE_PICTURES)
+          .upload(path, blob, { upsert: true });
+        if (!error) {
+          const { data: { publicUrl } } = supabase.storage
+            .from(BUCKETS.PROFILE_PICTURES)
+            .getPublicUrl(path);
+          avatarUrl = `${publicUrl}?t=${Date.now()}`;
+        }
+      } catch {}
     }
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: fullName } },
-    });
-    if (!error && data.session) {
-      set({ session: data.session, isDemoMode: false });
-      await get().refreshUser();
-    }
-    return { error };
+    const updatedUser: User = { ...user, full_name: name.trim(), avatar_url: avatarUrl };
+    set({ user: updatedUser, needsProfileSetup: false, isDemoMode: true });
+    saveToStorage({ isAuthenticated: true, needsProfileSetup: false, user: updatedUser });
   },
 
   signOut: async () => {
-    const { isDemoMode } = get();
-    if (!isDemoMode) {
-      await supabase.auth.signOut();
-    }
-    set({ user: null, session: null, isDemoMode: false });
+    set({ isAuthenticated: false, needsProfileSetup: false, user: null, isDemoMode: false, session: null });
+    await storage.remove(AUTH_KEY);
   },
 
   updateAvatar: (avatarUrl: string) => {
     const { user } = get();
-    if (user) set({ user: { ...user, avatar_url: avatarUrl } });
+    if (!user) return;
+    const updated = { ...user, avatar_url: avatarUrl };
+    set({ user: updated });
+    saveToStorage({ isAuthenticated: true, needsProfileSetup: false, user: updated });
   },
 
-  refreshUser: async () => {
-    if (get().isDemoMode) return;
-
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-    if (!authUser) return;
-
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authUser.id)
-      .single();
-
-    if (data) {
-      set({ user: data as User });
-    } else {
-      const newProfile: Partial<User> = {
-        id: authUser.id,
-        email: authUser.email || '',
-        full_name: authUser.user_metadata?.full_name || authUser.email || '',
-        role: 'traveler',
-        created_at: new Date().toISOString(),
-      };
-      const { data: created } = await supabase.from('profiles').insert(newProfile).select().single();
-      if (created) set({ user: created as User });
-    }
+  updateName: (name: string) => {
+    const { user } = get();
+    if (!user) return;
+    const updated = { ...user, full_name: name };
+    set({ user: updated });
+    saveToStorage({ isAuthenticated: true, needsProfileSetup: false, user: updated });
   },
 }));
