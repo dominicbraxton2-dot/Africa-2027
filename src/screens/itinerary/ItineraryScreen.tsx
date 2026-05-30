@@ -33,6 +33,30 @@ function isImageFile(filename?: string): boolean {
   return IMAGE_EXTENSIONS.includes(ext);
 }
 
+function isDataOrBlobUrl(url?: string | null): boolean {
+  return !!(url && (url.startsWith('data:') || url.startsWith('blob:')));
+}
+
+// Small component that gracefully falls back to an icon if the image fails to load
+function DocThumb({ uri, fallbackIcon, fallbackColor }: { uri: string; fallbackIcon: string; fallbackColor: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <View style={[styles.docIconBg, { backgroundColor: fallbackColor + '20' }]}>
+        <Text style={styles.docIcon}>{fallbackIcon}</Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri }}
+      style={styles.docThumb}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 const DESTINATION_OPTIONS = [
   { key: 'both' as const, label: '🌍 Both', color: Colors.gold },
   { key: 'zanzibar' as const, label: '🇹🇿 Zanzibar', color: '#1A8C7A' },
@@ -88,7 +112,7 @@ export function ItineraryScreen({ navigation }: Props) {
       setUploadDestination('both');
       setShowUploadModal(true);
     } catch {
-      setUploadError('Could not open the file picker. Please try again.');
+      setUploadError('Could not open the file picker. Please try again or choose a different file.');
     }
   };
 
@@ -111,8 +135,8 @@ export function ItineraryScreen({ navigation }: Props) {
         file_size: pendingAsset.size,
         uploaded_by: user?.id || '',
       });
-    } catch (err: any) {
-      setUploadError(err?.message || 'Upload failed. Please check your connection and try again.');
+    } catch {
+      setUploadError('Upload failed. Please try again or choose a different file.');
     } finally {
       setUploading(false);
       setPendingAsset(null);
@@ -126,11 +150,13 @@ export function ItineraryScreen({ navigation }: Props) {
   };
 
   const handleOpen = (doc: Itinerary) => {
-    if (doc.file_url) {
-      Linking.openURL(doc.file_url).catch(() => {
-        setUploadError(`Could not open "${doc.title}". Try the Download button instead.`);
-      });
+    if (!doc.file_url) {
+      setUploadError('This file was saved locally and is not available for viewing. Connect Supabase to enable persistent file storage.');
+      return;
     }
+    Linking.openURL(doc.file_url).catch(() => {
+      setUploadError(`Could not open "${doc.title}". The file may have expired. Try re-uploading.`);
+    });
   };
 
   const handleDeleteConfirm = async () => {
@@ -151,7 +177,8 @@ export function ItineraryScreen({ navigation }: Props) {
   const renderDocument = ({ item }: { item: Itinerary }) => {
     const meta = ITINERARY_CATEGORIES.find((c) => c.key === item.category) || ITINERARY_CATEGORIES[4];
     const sizeKB = item.file_size ? Math.round(item.file_size / 1024) : null;
-    const showImage = isImageFile(item.file_name) && item.file_url;
+    const showImage = isImageFile(item.file_name) && item.file_url && !item.file_url.startsWith('blob:');
+    const isLocal = item.id.startsWith('local-');
     const uploader = uploaderName(item.uploaded_by);
 
     return (
@@ -159,11 +186,7 @@ export function ItineraryScreen({ navigation }: Props) {
         {/* Thumbnail / icon */}
         <TouchableOpacity onPress={() => handleOpen(item)} activeOpacity={0.8}>
           {showImage ? (
-            <Image
-              source={{ uri: item.file_url! }}
-              style={styles.docThumb}
-              resizeMode="cover"
-            />
+            <DocThumb uri={item.file_url!} fallbackIcon={meta.icon} fallbackColor={meta.color} />
           ) : (
             <View style={[styles.docIconBg, { backgroundColor: meta.color + '20' }]}>
               <Text style={styles.docIcon}>{meta.icon}</Text>
@@ -186,6 +209,11 @@ export function ItineraryScreen({ navigation }: Props) {
                 {item.destination === 'zanzibar' ? '🇹🇿' : '🇿🇦'}
               </Text>
             )}
+            {isLocal && (
+              <View style={styles.localBadge}>
+                <Text style={styles.localBadgeText}>local</Text>
+              </View>
+            )}
           </View>
           <View style={styles.docSubMeta}>
             {uploader && <Text style={styles.docMeta}>by {uploader}</Text>}
@@ -202,12 +230,14 @@ export function ItineraryScreen({ navigation }: Props) {
           <TouchableOpacity onPress={() => handleOpen(item)} style={styles.docActionBtn}>
             <Text style={styles.docActionText}>Open</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => Linking.openURL(item.file_url || '')}
-            style={styles.docActionBtn}
-          >
-            <Text style={styles.docActionText}>↓</Text>
-          </TouchableOpacity>
+          {item.file_url && !item.file_url.startsWith('blob:') && (
+            <TouchableOpacity
+              onPress={() => Linking.openURL(item.file_url || '')}
+              style={styles.docActionBtn}
+            >
+              <Text style={styles.docActionText}>↓</Text>
+            </TouchableOpacity>
+          )}
           {canDelete(item) && (
             <TouchableOpacity onPress={() => setConfirmDeleteId(item.id)} style={styles.docDeleteBtn}>
               <Text style={styles.docDeleteText}>×</Text>
@@ -469,6 +499,21 @@ const styles = StyleSheet.create({
   },
   docCategory: { fontSize: Typography.sizes.xs, fontWeight: '700' },
   destFlag: { fontSize: Typography.sizes.sm },
+  localBadge: {
+    paddingHorizontal: Spacing.xs,
+    paddingVertical: 1,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: Colors.safariGreen + '30',
+    borderWidth: 1,
+    borderColor: Colors.safariGreenLight + '50',
+  },
+  localBadgeText: {
+    color: Colors.safariGreenLight,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
   docSubMeta: { flexDirection: 'row', flexWrap: 'wrap' },
   docMeta: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
   docMetaDot: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
