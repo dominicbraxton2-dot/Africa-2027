@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,9 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { ScreenHeader } from '../../components/common/ScreenHeader';
@@ -19,6 +21,7 @@ import { GoldInput } from '../../components/common/GoldInput';
 import { EmptyState } from '../../components/common/EmptyState';
 import { useTripStore } from '../../store/tripStore';
 import { useAuthStore } from '../../store/authStore';
+import { supabase, BUCKETS, isSupabaseConfigured } from '../../lib/supabase';
 import { Expense, ExpenseCategory, SplitType, ExpenseParticipant, EXPENSE_CATEGORIES, CURRENCIES } from '../../types';
 import { convertToUSD, formatCurrency } from '../../services/currencyService';
 import { format } from 'date-fns';
@@ -28,12 +31,31 @@ interface Props {
   route?: any;
 }
 
+// ── Web file-input helper ─────────────────────────────────────────────────────
+// Returns { uri: string (object URL), file: File } or null
+function webPickImage(capture?: boolean): Promise<{ uri: string; file: File } | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/jpeg,image/jpg,image/png,image/heic,image/heif,image/webp,image/*';
+    if (capture) input.capture = 'environment';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) { resolve(null); return; }
+      resolve({ uri: URL.createObjectURL(file), file });
+    };
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
 export function ExpensesScreen({ navigation, route }: Props) {
   const { expenses, fetchExpenses, addExpense, allUsers, fetchAllUsers } = useTripStore();
   const { user } = useAuthStore();
   const [showModal, setShowModal] = useState(route?.params?.openAdd || false);
   const [filterCategory, setFilterCategory] = useState<ExpenseCategory | 'all'>('all');
 
+  // Form state
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState('USD');
@@ -47,6 +69,14 @@ export function ExpensesScreen({ navigation, route }: Props) {
   const [converting, setConverting] = useState(false);
   const [usdPreview, setUsdPreview] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Receipt state
+  const [receiptUri, setReceiptUri] = useState<string | null>(null);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null); // web only
+  const [receiptError, setReceiptError] = useState('');
+
+  // Full-size viewer
+  const [viewReceiptUrl, setViewReceiptUrl] = useState<string | null>(null);
 
   useEffect(() => {
     fetchExpenses();
@@ -93,6 +123,102 @@ export function ExpensesScreen({ navigation, route }: Props) {
     setNotes('');
     setUsdPreview(null);
     setErrorMsg('');
+    setReceiptUri(null);
+    setReceiptFile(null);
+    setReceiptError('');
+  };
+
+  // ── Receipt picking ───────────────────────────────────────────────────────
+
+  const pickReceiptImage = async (source: 'camera' | 'library') => {
+    setReceiptError('');
+    try {
+      if (Platform.OS === 'web') {
+        const result = await webPickImage(source === 'camera');
+        if (result) {
+          setReceiptUri(result.uri);
+          setReceiptFile(result.file);
+        }
+        return;
+      }
+
+      // Native: request permissions then launch picker
+      if (source === 'camera') {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          setReceiptError('Camera permission is required.');
+          return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+          quality: 0.85,
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+        });
+        if (!result.canceled && result.assets[0]) {
+          setReceiptUri(result.assets[0].uri);
+          setReceiptFile(null);
+        }
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          setReceiptError('Gallery permission is required.');
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          quality: 0.85,
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: false,
+        });
+        if (!result.canceled && result.assets[0]) {
+          setReceiptUri(result.assets[0].uri);
+          setReceiptFile(null);
+        }
+      }
+    } catch {
+      // Camera not available on web — fall back to library file input
+      if (Platform.OS === 'web') {
+        const result = await webPickImage(false);
+        if (result) {
+          setReceiptUri(result.uri);
+          setReceiptFile(result.file);
+        }
+      } else {
+        setReceiptError('Could not access image source. Please try again.');
+      }
+    }
+  };
+
+  // Upload receipt image to Supabase and return public URL
+  const uploadReceiptToStorage = async (): Promise<string | undefined> => {
+    if (!receiptUri) return undefined;
+    if (!isSupabaseConfigured()) return undefined;
+
+    try {
+      let blob: Blob;
+      if (receiptFile instanceof File) {
+        blob = receiptFile;
+      } else {
+        const resp = await fetch(receiptUri);
+        blob = await resp.blob();
+      }
+
+      const ext = blob.type.includes('png') ? 'png' : blob.type.includes('heic') ? 'heic' : 'jpg';
+      const path = `${user?.id || 'anon'}/${Date.now()}.${ext}`;
+
+      const { error } = await supabase.storage
+        .from(BUCKETS.EXPENSE_RECEIPTS)
+        .upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: false });
+
+      if (error) return undefined;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from(BUCKETS.EXPENSE_RECEIPTS)
+        .getPublicUrl(path);
+
+      return publicUrl;
+    } catch {
+      return undefined;
+    }
   };
 
   const handleSave = async () => {
@@ -132,6 +258,9 @@ export function ExpensesScreen({ navigation, route }: Props) {
         }));
       }
 
+      // Upload receipt if present
+      const receipt_url = await uploadReceiptToStorage();
+
       await addExpense({
         title: title.trim(),
         category,
@@ -141,6 +270,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
         exchange_rate: rate,
         paid_by: user?.id || '',
         split_type: splitType,
+        receipt_url: receipt_url || (receiptUri ? receiptUri : undefined),
         participants,
         expense_date: new Date().toISOString(),
         notes: notes.trim() || undefined,
@@ -178,17 +308,27 @@ export function ExpensesScreen({ navigation, route }: Props) {
               {format(new Date(item.expense_date), 'MMM d')} · Paid by {paidByName}
               {item.original_currency !== 'USD' && item.original_amount && (
                 <Text style={styles.originalCurrency}>
-                  {' '}({formatCurrency(item.original_amount, item.original_currency)})
+                  {' '}({formatCurrency(item.original_amount, item.original_currency!)})
                 </Text>
               )}
             </Text>
           </View>
-          <View style={styles.expenseAmounts}>
-            <Text style={styles.expenseTotal}>${item.amount_usd.toFixed(2)}</Text>
-            {myParticipant && (
-              <Text style={[styles.mySplit, myParticipant.is_settled && styles.settled]}>
-                {myParticipant.is_settled ? '✓ settled' : `you: $${myParticipant.amount.toFixed(2)}`}
-              </Text>
+          <View style={styles.expenseRight}>
+            <View style={styles.expenseAmounts}>
+              <Text style={styles.expenseTotal}>${item.amount_usd.toFixed(2)}</Text>
+              {myParticipant && (
+                <Text style={[styles.mySplit, myParticipant.is_settled && styles.settled]}>
+                  {myParticipant.is_settled ? '✓ settled' : `you: $${myParticipant.amount.toFixed(2)}`}
+                </Text>
+              )}
+            </View>
+            {item.receipt_url && (
+              <TouchableOpacity onPress={() => setViewReceiptUrl(item.receipt_url!)} style={styles.thumbBtn}>
+                <Image source={{ uri: item.receipt_url }} style={styles.receiptThumb} />
+                <View style={styles.thumbOverlay}>
+                  <Text style={styles.thumbIcon}>🧾</Text>
+                </View>
+              </TouchableOpacity>
             )}
           </View>
         </View>
@@ -220,7 +360,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
         rightAction={{ icon: '＋', onPress: () => setShowModal(true) }}
       />
 
-      <LinearGradient colors={['#1A1200', '#0F0A00']} style={styles.summary}>
+      <LinearGradient colors={[Colors.safariGreenDark + '40', Colors.black]} style={styles.summary}>
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>Total Spent</Text>
           <Text style={styles.summaryValue}>${totalSpent.toFixed(2)}</Text>
@@ -270,7 +410,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <EmptyState
-            icon="💳"
+            icon="💰"
             title="No Expenses Yet"
             subtitle="Add your first expense by tapping ＋ above."
             action={{ label: 'Add Expense', onPress: () => setShowModal(true) }}
@@ -278,6 +418,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
         }
       />
 
+      {/* ── Add Expense Modal ─────────────────────────────────────────────── */}
       <Modal visible={showModal} animationType="slide" presentationStyle="pageSheet">
         <View style={styles.modal}>
           <View style={styles.modalHeader}>
@@ -289,6 +430,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
 
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={styles.modalScroll} showsVerticalScrollIndicator={false}>
+
               <GoldInput
                 label="Description"
                 placeholder="e.g. Dinner at Gold Restaurant"
@@ -419,6 +561,75 @@ export function ExpensesScreen({ navigation, route }: Props) {
                 </>
               )}
 
+              {/* ── RECEIPT SECTION ─────────────────────────────────────── */}
+              <Text style={[styles.fieldLabel, { marginTop: Spacing.xl }]}>RECEIPT (OPTIONAL)</Text>
+
+              {receiptUri ? (
+                // Preview + change/remove
+                <View style={styles.receiptPreviewBox}>
+                  <Image source={{ uri: receiptUri }} style={styles.receiptPreviewImg} resizeMode="cover" />
+                  <LinearGradient
+                    colors={['transparent', Colors.black + 'CC']}
+                    style={styles.receiptPreviewOverlay}
+                  >
+                    <View style={styles.receiptPreviewActions}>
+                      <TouchableOpacity
+                        style={styles.receiptActionBtn}
+                        onPress={() => pickReceiptImage('library')}
+                      >
+                        <Text style={styles.receiptActionText}>🔄 Change</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.receiptActionBtn, styles.receiptRemoveBtn]}
+                        onPress={() => { setReceiptUri(null); setReceiptFile(null); }}
+                      >
+                        <Text style={[styles.receiptActionText, { color: Colors.error }]}>✕ Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </LinearGradient>
+                </View>
+              ) : (
+                // Pick buttons
+                <View style={styles.receiptPickRow}>
+                  <TouchableOpacity
+                    style={styles.receiptPickBtn}
+                    onPress={() => pickReceiptImage('camera')}
+                    activeOpacity={0.75}
+                  >
+                    <LinearGradient
+                      colors={[Colors.safariGreen + '40', Colors.cardBg]}
+                      style={styles.receiptPickGrad}
+                    >
+                      <Text style={styles.receiptPickIcon}>📷</Text>
+                      <Text style={styles.receiptPickLabel}>Take Photo</Text>
+                      {Platform.OS === 'web' && (
+                        <Text style={styles.receiptPickSub}>camera / file</Text>
+                      )}
+                    </LinearGradient>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.receiptPickBtn}
+                    onPress={() => pickReceiptImage('library')}
+                    activeOpacity={0.75}
+                  >
+                    <LinearGradient
+                      colors={[Colors.safariGreen + '40', Colors.cardBg]}
+                      style={styles.receiptPickGrad}
+                    >
+                      <Text style={styles.receiptPickIcon}>🖼️</Text>
+                      <Text style={styles.receiptPickLabel}>Upload Image</Text>
+                      <Text style={styles.receiptPickSub}>JPG · PNG · HEIC</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {receiptError ? (
+                <Text style={styles.receiptErrorText}>⚠️ {receiptError}</Text>
+              ) : null}
+
+              {/* ── NOTES ─────────────────────────────────────────────────── */}
               <GoldInput
                 label="Notes (optional)"
                 placeholder="Any notes about this expense..."
@@ -436,7 +647,7 @@ export function ExpensesScreen({ navigation, route }: Props) {
               ) : null}
 
               <GoldButton
-                title="Save Expense"
+                title={saving ? 'Saving…' : receiptUri ? 'Save Expense + Receipt' : 'Save Expense'}
                 onPress={handleSave}
                 loading={saving}
                 style={{ marginTop: Spacing.sm }}
@@ -447,6 +658,31 @@ export function ExpensesScreen({ navigation, route }: Props) {
             </ScrollView>
           </KeyboardAvoidingView>
         </View>
+      </Modal>
+
+      {/* ── Receipt full-size viewer ──────────────────────────────────────── */}
+      <Modal visible={!!viewReceiptUrl} animationType="fade" transparent>
+        <TouchableOpacity
+          style={styles.viewerBg}
+          activeOpacity={1}
+          onPress={() => setViewReceiptUrl(null)}
+        >
+          <View style={styles.viewerCard}>
+            <View style={styles.viewerHeader}>
+              <Text style={styles.viewerTitle}>🧾 Receipt</Text>
+              <TouchableOpacity onPress={() => setViewReceiptUrl(null)}>
+                <Text style={styles.viewerClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {viewReceiptUrl && (
+              <Image
+                source={{ uri: viewReceiptUrl }}
+                style={styles.viewerImage}
+                resizeMode="contain"
+              />
+            )}
+          </View>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -485,6 +721,8 @@ const styles = StyleSheet.create({
   filterText: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, fontWeight: '600' },
   filterTextActive: { color: Colors.black },
   list: { padding: Spacing.base, gap: Spacing.sm },
+
+  // Expense card
   expenseCard: { gap: Spacing.sm },
   expenseRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
   catBadge: { width: 44, height: 44, borderRadius: BorderRadius.md, alignItems: 'center', justifyContent: 'center' },
@@ -493,10 +731,34 @@ const styles = StyleSheet.create({
   expenseTitle: { color: Colors.textPrimary, fontSize: Typography.sizes.base, fontWeight: '600', marginBottom: 4 },
   expenseMeta: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
   originalCurrency: { color: Colors.textSecondary, fontStyle: 'italic' },
+  expenseRight: { alignItems: 'flex-end', gap: Spacing.xs },
   expenseAmounts: { alignItems: 'flex-end' },
   expenseTotal: { color: Colors.textPrimary, fontSize: Typography.sizes.md, fontWeight: '800' },
   mySplit: { color: Colors.warning, fontSize: Typography.sizes.xs, fontWeight: '600', marginTop: 4 },
   settled: { color: Colors.success },
+
+  // Receipt thumbnail on card
+  thumbBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.sm,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.gold + '50',
+  },
+  receiptThumb: {
+    width: 44,
+    height: 44,
+  },
+  thumbOverlay: {
+    position: 'absolute',
+    inset: 0,
+    backgroundColor: Colors.black + '40',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbIcon: { fontSize: 16 },
+
   splitPreview: { flexDirection: 'row', gap: Spacing.xs, flexWrap: 'wrap', paddingTop: Spacing.xs },
   splitChip: {
     backgroundColor: Colors.surfaceBg,
@@ -508,6 +770,8 @@ const styles = StyleSheet.create({
   },
   splitChipText: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
   moreSplits: { color: Colors.textMuted, fontSize: Typography.sizes.xs, alignSelf: 'center' },
+
+  // Modal
   modal: { flex: 1, backgroundColor: Colors.black },
   modalHeader: {
     flexDirection: 'row',
@@ -595,6 +859,88 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: Spacing.base,
   },
+
+  // Receipt section in form
+  receiptPreviewBox: {
+    height: 200,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.gold + '40',
+    marginBottom: Spacing.sm,
+    position: 'relative',
+  },
+  receiptPreviewImg: {
+    width: '100%',
+    height: '100%',
+  },
+  receiptPreviewOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 72,
+    justifyContent: 'flex-end',
+    padding: Spacing.md,
+  },
+  receiptPreviewActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  receiptActionBtn: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    backgroundColor: Colors.black + 'CC',
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+  },
+  receiptRemoveBtn: {
+    borderColor: Colors.error + '50',
+  },
+  receiptActionText: {
+    color: Colors.textPrimary,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+  },
+  receiptPickRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  receiptPickBtn: {
+    flex: 1,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+  },
+  receiptPickGrad: {
+    padding: Spacing.base,
+    alignItems: 'center',
+    minHeight: 90,
+    justifyContent: 'center',
+    gap: Spacing.xs,
+  },
+  receiptPickIcon: { fontSize: 28 },
+  receiptPickLabel: {
+    color: Colors.textPrimary,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  receiptPickSub: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+    textAlign: 'center',
+  },
+  receiptErrorText: {
+    color: Colors.error,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+    marginBottom: Spacing.sm,
+  },
+
   errorBox: {
     backgroundColor: Colors.error + '18',
     borderWidth: 1,
@@ -605,4 +951,45 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
   },
   errorText: { color: Colors.error, fontSize: Typography.sizes.sm, fontWeight: '600', lineHeight: 20 },
+
+  // Full-size receipt viewer
+  viewerBg: {
+    flex: 1,
+    backgroundColor: Colors.black + 'E8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
+  },
+  viewerCard: {
+    width: '100%',
+    maxWidth: 480,
+    backgroundColor: Colors.cardBg,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.gold + '40',
+    overflow: 'hidden',
+  },
+  viewerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: Spacing.base,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderColor,
+  },
+  viewerTitle: {
+    color: Colors.gold,
+    fontSize: Typography.sizes.md,
+    fontWeight: '800',
+  },
+  viewerClose: {
+    color: Colors.textSecondary,
+    fontSize: 22,
+    fontWeight: '600',
+    paddingHorizontal: Spacing.sm,
+  },
+  viewerImage: {
+    width: '100%',
+    height: 500,
+  },
 });

@@ -43,6 +43,7 @@ export const TABLES = {
 export const BUCKETS = {
   ITINERARIES: 'itineraries',
   RECEIPTS: 'receipts',
+  EXPENSE_RECEIPTS: 'expense-receipts',
   AVATARS: 'avatars',
   MEMORIES: 'memories',
 };

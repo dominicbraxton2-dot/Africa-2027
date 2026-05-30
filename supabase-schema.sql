@@ -201,10 +201,11 @@ CREATE POLICY "settlements: from insert" ON public.settlements FOR INSERT WITH C
 -- Run these in Supabase SQL Editor or via CLI:
 -- INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 -- VALUES
---   ('itineraries',  'itineraries',  true,  52428800, '{application/pdf,image/*}'),
---   ('receipts',     'receipts',     false, 10485760, '{image/*}'),
---   ('avatars',      'avatars',      true,  5242880,  '{image/*}'),
---   ('memories',     'memories',     false, 52428800, '{image/*,video/*}');
+--   ('itineraries',     'itineraries',     true,  52428800, '{application/pdf,image/*}'),
+--   ('receipts',        'receipts',        false, 10485760, '{image/*}'),
+--   ('expense-receipts','expense-receipts',true,  10485760, '{image/*}'),
+--   ('avatars',         'avatars',         true,  5242880,  '{image/*}'),
+--   ('memories',        'memories',        false, 52428800, '{image/*,video/*}');
 
 -- ── Triggers & Functions ─────────────────────────────────────
 
@@ -279,5 +280,35 @@ CREATE INDEX IF NOT EXISTS idx_itineraries_uploaded_by ON public.itineraries(upl
 -- CREATE POLICY "storage_itineraries_delete_admin" ON storage.objects
 --   FOR DELETE USING (
 --     bucket_id = 'itineraries' AND
+--     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+--   );
+
+-- ── expense-receipts bucket policies ─────────────────────────
+-- Any authenticated user can read receipt images (bucket is public).
+-- Users upload to their own folder (<user_id>/filename); admins can delete any.
+
+-- INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+-- VALUES ('expense-receipts', 'expense-receipts', true, 10485760,
+--   '{image/jpeg,image/jpg,image/png,image/heic,image/heif,image/webp}')
+-- ON CONFLICT (id) DO NOTHING;
+
+-- CREATE POLICY "expense_receipts_read" ON storage.objects
+--   FOR SELECT USING (bucket_id = 'expense-receipts' AND auth.uid() IS NOT NULL);
+
+-- CREATE POLICY "expense_receipts_insert" ON storage.objects
+--   FOR INSERT WITH CHECK (
+--     bucket_id = 'expense-receipts' AND
+--     auth.uid() IS NOT NULL AND
+--     auth.uid()::text = (storage.foldername(name))[1]
+--   );
+
+-- CREATE POLICY "expense_receipts_delete_own" ON storage.objects
+--   FOR DELETE USING (
+--     bucket_id = 'expense-receipts' AND auth.uid()::text = (storage.foldername(name))[1]
+--   );
+
+-- CREATE POLICY "expense_receipts_delete_admin" ON storage.objects
+--   FOR DELETE USING (
+--     bucket_id = 'expense-receipts' AND
 --     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 --   );
