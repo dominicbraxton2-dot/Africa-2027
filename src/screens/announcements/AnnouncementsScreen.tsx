@@ -19,6 +19,8 @@ import { GoldInput } from '../../components/common/GoldInput';
 import { EmptyState } from '../../components/common/EmptyState';
 import { useAnnouncementsStore } from '../../store/announcementsStore';
 import { useAuthStore } from '../../store/authStore';
+import { useTripStore } from '../../store/tripStore';
+import { UserAvatar } from '../../components/common/UserAvatar';
 import { Announcement } from '../../types';
 import { format } from 'date-fns';
 
@@ -38,6 +40,7 @@ export function AnnouncementsScreen({ navigation }: Props) {
   const { announcements, loading, fetchAnnouncements, addAnnouncement, deleteAnnouncement, togglePin } =
     useAnnouncementsStore();
   const { user } = useAuthStore();
+  const { allUsers } = useTripStore();
   const isAdmin = user?.role === 'admin';
 
   const [showModal, setShowModal] = useState(false);
@@ -81,6 +84,7 @@ export function AnnouncementsScreen({ navigation }: Props) {
 
   const renderAnnouncement = ({ item }: { item: Announcement }) => {
     const meta = TYPE_META[item.type];
+    const author = allUsers.find((u) => u.id === item.author_id);
     return (
       <Card style={[styles.card, item.pinned && styles.pinnedCard]}>
         {item.pinned && (
@@ -99,6 +103,12 @@ export function AnnouncementsScreen({ navigation }: Props) {
         </View>
         <Text style={styles.cardTitle}>{item.title}</Text>
         <Text style={styles.cardBody}>{item.body}</Text>
+        {author && (
+          <View style={styles.authorRow}>
+            <UserAvatar user={author} size={22} />
+            <Text style={styles.authorName}>{author.full_name}</Text>
+          </View>
+        )}
         {isAdmin && (
           <View style={styles.adminActions}>
             <TouchableOpacity
@@ -274,6 +284,17 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: Typography.sizes.base,
     lineHeight: 22,
+  },
+  authorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginTop: 2,
+  },
+  authorName: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+    fontWeight: '600',
   },
   adminActions: {
     flexDirection: 'row',

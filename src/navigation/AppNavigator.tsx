@@ -19,7 +19,6 @@ import { LoginScreen } from '../screens/auth/LoginScreen';
 // Screens
 import { DashboardScreen } from '../screens/dashboard/DashboardScreen';
 import { ItineraryScreen } from '../screens/itinerary/ItineraryScreen';
-import { EmergencyScreen } from '../screens/emergency/EmergencyScreen';
 import { DirectoryScreen } from '../screens/directory/DirectoryScreen';
 import { ExpensesScreen } from '../screens/expenses/ExpensesScreen';
 import { ReceiptsScreen } from '../screens/receipts/ReceiptsScreen';
@@ -100,8 +99,7 @@ function HubScreen({ navigation }: any) {
     { icon: '👥', label: 'Traveler Directory', subtitle: 'Contact the group', screen: 'Directory', accent: Colors.teal },
     { icon: '⚖️', label: 'Balances', subtitle: 'Who owes whom', screen: 'BalancesTab', accent: Colors.safariGreenLight },
     { icon: '💸', label: 'Settlement Center', subtitle: 'Record payments & settle debts', screen: 'Settlement', accent: Colors.gold },
-    { icon: '🆘', label: 'Emergency Center', subtitle: 'Police, ambulance & embassy contacts', screen: 'Emergency', accent: Colors.error },
-    { icon: '📸', label: 'Memory Vault', subtitle: 'Photos & moments from the trip', screen: 'Memory', accent: Colors.teal },
+    { icon: '🖼️', label: 'Memory Vault', subtitle: 'Photos & moments from the trip', screen: 'Memory', accent: Colors.teal },
   ];
 
   return (
@@ -196,7 +194,6 @@ export function AppNavigator() {
             <Stack.Screen name="Main" component={TabNavigator} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="Itinerary" component={ItineraryScreen} />
-            <Stack.Screen name="Emergency" component={EmergencyScreen} />
             <Stack.Screen name="Directory" component={DirectoryScreen} />
             <Stack.Screen name="Receipts" component={ReceiptsScreen} />
             <Stack.Screen name="Expenses" component={ExpensesScreen} />

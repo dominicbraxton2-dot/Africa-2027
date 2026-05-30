@@ -44,6 +44,7 @@ export const BUCKETS = {
   ITINERARIES: 'itineraries',
   RECEIPTS: 'receipts',
   EXPENSE_RECEIPTS: 'expense-receipts',
+  PROFILE_PICTURES: 'profile-pictures',
   AVATARS: 'avatars',
   MEMORIES: 'memories',
 };

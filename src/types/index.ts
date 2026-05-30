@@ -151,36 +151,6 @@ export interface MemoryItem {
   created_at: string;
 }
 
-export interface EmergencyInfo {
-  destination: 'zanzibar' | 'cape_town';
-  police: string;
-  ambulance: string;
-  embassy_name: string;
-  embassy_phone: string;
-  embassy_address: string;
-  embassy_hours?: string;
-}
-
-export const EMERGENCY_INFO: EmergencyInfo[] = [
-  {
-    destination: 'zanzibar',
-    police: '+255 24 223 3060',
-    ambulance: '+255 24 223 2222',
-    embassy_name: 'U.S. Embassy Dar es Salaam',
-    embassy_phone: '+255 22 229 4000',
-    embassy_address: '686 Old Bagamoyo Rd, Msasani, Dar es Salaam',
-    embassy_hours: 'Mon–Fri 7:30am–4:30pm',
-  },
-  {
-    destination: 'cape_town',
-    police: '10111',
-    ambulance: '10177',
-    embassy_name: 'U.S. Consulate Cape Town',
-    embassy_phone: '+27 21 702 7300',
-    embassy_address: '2 Reddam Ave, Westlake, Cape Town 7945',
-    embassy_hours: 'Mon–Fri 8:00am–4:30pm',
-  },
-];
 
 export const CURRENCIES = {
   TZS: { name: 'Tanzanian Shilling', symbol: 'TZS', flag: '🇹🇿' },

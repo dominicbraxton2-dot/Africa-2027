@@ -8,12 +8,11 @@ import {
   Linking,
   TextInput,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import * as ImagePicker from 'expo-image-picker';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { ScreenHeader } from '../../components/common/ScreenHeader';
 import { Card } from '../../components/common/Card';
 import { EmptyState } from '../../components/common/EmptyState';
+import { UserAvatar } from '../../components/common/UserAvatar';
 import { useTripStore } from '../../store/tripStore';
 
 interface Props {
@@ -49,22 +48,10 @@ export function DirectoryScreen({ navigation }: Props) {
   };
 
   const renderUser = ({ item: user }: { item: any }) => {
-    const initials = (user.full_name || 'T')
-      .split(' ')
-      .map((n: string) => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-
     return (
       <Card style={styles.card}>
         <View style={styles.cardHeader}>
-          <LinearGradient
-            colors={[Colors.goldLight, Colors.goldDark]}
-            style={styles.avatar}
-          >
-            <Text style={styles.avatarText}>{initials}</Text>
-          </LinearGradient>
+          <UserAvatar user={user} size={56} />
           <View style={styles.info}>
             <View style={styles.nameRow}>
               <Text style={styles.name}>{user.full_name}</Text>
@@ -205,18 +192,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: Spacing.md,
-  },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: Colors.black,
-    fontSize: Typography.sizes.xl,
-    fontWeight: '800',
   },
   info: { flex: 1 },
   nameRow: {

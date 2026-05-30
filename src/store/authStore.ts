@@ -25,6 +25,7 @@ interface AuthState {
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  updateAvatar: (avatarUrl: string) => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -93,6 +94,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await supabase.auth.signOut();
     }
     set({ user: null, session: null, isDemoMode: false });
+  },
+
+  updateAvatar: (avatarUrl: string) => {
+    const { user } = get();
+    if (user) set({ user: { ...user, avatar_url: avatarUrl } });
   },
 
   refreshUser: async () => {

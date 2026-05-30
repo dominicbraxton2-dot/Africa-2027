@@ -25,7 +25,7 @@ const DEPARTURE_DATE = new Date('2027-01-14T00:00:00');
 const QUICK_ACTIONS = [
   { id: 'itinerary', label: 'Itinerary', icon: '📅', screen: 'Itinerary' },
   { id: 'receipts', label: 'Scan Receipt', icon: '📸', screen: 'Receipts' },
-  { id: 'emergency', label: 'Emergency', icon: '🆘', screen: 'Emergency' },
+  { id: 'gallery', label: 'Gallery', icon: '🖼️', screen: 'Memory' },
   { id: 'expenses', label: 'Expenses', icon: '💰', screen: 'ExpensesTab' },
   { id: 'directory', label: 'Travelers', icon: '👥', screen: 'Directory' },
   { id: 'updates', label: 'Updates', icon: '📢', screen: 'Announcements' },

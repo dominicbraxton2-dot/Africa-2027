@@ -312,3 +312,39 @@ CREATE INDEX IF NOT EXISTS idx_itineraries_uploaded_by ON public.itineraries(upl
 --     bucket_id = 'expense-receipts' AND
 --     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 --   );
+
+-- ── profile-pictures bucket policies ─────────────────────────
+-- Public bucket; users upload/overwrite only their own file (<user_id>.ext).
+-- All authenticated users can read any profile picture.
+
+-- INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+-- VALUES ('profile-pictures', 'profile-pictures', true, 5242880,
+--   '{image/jpeg,image/jpg,image/png,image/heic,image/heif,image/webp}')
+-- ON CONFLICT (id) DO NOTHING;
+
+-- CREATE POLICY "profile_pictures_read" ON storage.objects
+--   FOR SELECT USING (bucket_id = 'profile-pictures' AND auth.uid() IS NOT NULL);
+
+-- CREATE POLICY "profile_pictures_insert_own" ON storage.objects
+--   FOR INSERT WITH CHECK (
+--     bucket_id = 'profile-pictures' AND
+--     auth.uid() IS NOT NULL AND
+--     starts_with(name, auth.uid()::text || '.')
+--   );
+
+-- CREATE POLICY "profile_pictures_update_own" ON storage.objects
+--   FOR UPDATE USING (
+--     bucket_id = 'profile-pictures' AND
+--     starts_with(name, auth.uid()::text || '.')
+--   );
+
+-- CREATE POLICY "profile_pictures_delete_own" ON storage.objects
+--   FOR DELETE USING (
+--     bucket_id = 'profile-pictures' AND starts_with(name, auth.uid()::text || '.')
+--   );
+
+-- CREATE POLICY "profile_pictures_delete_admin" ON storage.objects
+--   FOR DELETE USING (
+--     bucket_id = 'profile-pictures' AND
+--     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+--   );

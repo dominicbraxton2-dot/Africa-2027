@@ -22,6 +22,7 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { useTripStore } from '../../store/tripStore';
 import { useAuthStore } from '../../store/authStore';
 import { supabase, BUCKETS, isSupabaseConfigured } from '../../lib/supabase';
+import { UserAvatar } from '../../components/common/UserAvatar';
 import { Expense, ExpenseCategory, SplitType, ExpenseParticipant, EXPENSE_CATEGORIES, CURRENCIES } from '../../types';
 import { convertToUSD, formatCurrency } from '../../services/currencyService';
 import { format } from 'date-fns';
@@ -483,22 +484,13 @@ export function ExpensesScreen({ navigation, route }: Props) {
               <View style={styles.usersGrid}>
                 {allUsers.map((u) => {
                   const selected = selectedUsers.includes(u.id);
-                  const initials = (u.full_name || 'T').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
                   return (
                     <TouchableOpacity
                       key={u.id}
                       onPress={() => { toggleUser(u.id); setErrorMsg(''); }}
                       style={[styles.userChip, selected && styles.userChipSelected]}
                     >
-                      <View style={[styles.userChipAvatar, !selected && { backgroundColor: Colors.surfaceBg }]}>
-                        {selected ? (
-                          <LinearGradient colors={[Colors.goldLight, Colors.goldDark]} style={styles.userChipAvatar}>
-                            <Text style={styles.userChipInitialsSelected}>{initials}</Text>
-                          </LinearGradient>
-                        ) : (
-                          <Text style={styles.userChipInitials}>{initials}</Text>
-                        )}
-                      </View>
+                      <UserAvatar user={u} size={36} style={styles.userChipAvatarImg} />
                       <Text style={[styles.userChipName, selected && styles.userChipNameSelected]} numberOfLines={1}>
                         {u.full_name?.split(' ')[0]}
                       </Text>
@@ -826,17 +818,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceBg,
   },
   userChipSelected: { borderColor: Colors.gold + '60', backgroundColor: Colors.gold + '10' },
-  userChipAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.surfaceBg,
+  userChipAvatarImg: {
     marginBottom: 4,
   },
-  userChipInitials: { color: Colors.textMuted, fontSize: Typography.sizes.sm, fontWeight: '700' },
-  userChipInitialsSelected: { color: Colors.black, fontSize: Typography.sizes.sm, fontWeight: '800' },
   userChipName: { color: Colors.textMuted, fontSize: Typography.sizes.xs, textAlign: 'center' },
   userChipNameSelected: { color: Colors.gold, fontWeight: '600' },
   splitTypeRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },

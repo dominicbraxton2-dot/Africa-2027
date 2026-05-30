@@ -7,7 +7,10 @@ import {
   TouchableOpacity,
   Switch,
   Modal,
+  Platform,
+  Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { ScreenHeader } from '../../components/common/ScreenHeader';
@@ -15,14 +18,29 @@ import { Card } from '../../components/common/Card';
 import { GoldButton } from '../../components/common/GoldButton';
 import { GoldInput } from '../../components/common/GoldInput';
 import { useAuthStore } from '../../store/authStore';
-import { supabase, TABLES } from '../../lib/supabase';
+import { supabase, TABLES, BUCKETS, isSupabaseConfigured } from '../../lib/supabase';
 
 interface Props {
   navigation: any;
 }
 
+function webPickImage(): Promise<{ uri: string; file: File } | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/jpeg,image/jpg,image/png,image/heic,image/heif,image/webp,image/*';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) { resolve(null); return; }
+      resolve({ uri: URL.createObjectURL(file), file });
+    };
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
 export function ProfileScreen({ navigation }: Props) {
-  const { user, signOut, refreshUser } = useAuthStore();
+  const { user, signOut, refreshUser, updateAvatar } = useAuthStore();
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showSensitive, setShowSensitive] = useState(false);
@@ -30,18 +48,20 @@ export function ProfileScreen({ navigation }: Props) {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState('');
 
+  // Profile picture
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+
+  // Contact
   const [phone, setPhone] = useState(user?.phone || '');
   const [instagram, setInstagram] = useState(user?.instagram || '');
+
+  // Travel documents
   const [passportNumber, setPassportNumber] = useState('');
   const [nationality, setNationality] = useState('');
   const [dob, setDob] = useState('');
-  const [emergencyName, setEmergencyName] = useState('');
-  const [emergencyRelation, setEmergencyRelation] = useState('');
-  const [emergencyPhone, setEmergencyPhone] = useState('');
-  const [emergencyEmail, setEmergencyEmail] = useState('');
-  const [allergies, setAllergies] = useState('');
-  const [medications, setMedications] = useState('');
-  const [bloodType, setBloodType] = useState('');
   const [dietaryRestrictions, setDietaryRestrictions] = useState('');
 
   useEffect(() => {
@@ -60,13 +80,6 @@ export function ProfileScreen({ navigation }: Props) {
       setPassportNumber(data.passport_number || '');
       setNationality(data.nationality || '');
       setDob(data.date_of_birth || '');
-      setEmergencyName(data.emergency_contact_name || '');
-      setEmergencyRelation(data.emergency_contact_relation || '');
-      setEmergencyPhone(data.emergency_contact_phone || '');
-      setEmergencyEmail(data.emergency_contact_email || '');
-      setAllergies(data.allergies || '');
-      setMedications(data.medications || '');
-      setBloodType(data.blood_type || '');
       setDietaryRestrictions(data.dietary_restrictions || '');
     }
   };
@@ -84,13 +97,6 @@ export function ProfileScreen({ navigation }: Props) {
         passport_number: passportNumber,
         nationality,
         date_of_birth: dob,
-        emergency_contact_name: emergencyName,
-        emergency_contact_relation: emergencyRelation,
-        emergency_contact_phone: emergencyPhone,
-        emergency_contact_email: emergencyEmail,
-        allergies,
-        medications,
-        blood_type: bloodType,
         dietary_restrictions: dietaryRestrictions,
       });
 
@@ -104,6 +110,83 @@ export function ProfileScreen({ navigation }: Props) {
       setSaving(false);
     }
   };
+
+  // ── Avatar upload ─────────────────────────────────────────────────────────
+
+  const pickAvatar = async (source: 'camera' | 'library') => {
+    setShowAvatarPicker(false);
+    try {
+      if (Platform.OS === 'web') {
+        const result = await webPickImage();
+        if (result) {
+          setAvatarUri(result.uri);
+          setAvatarFile(result.file);
+          await uploadAvatar(result.uri, result.file);
+        }
+        return;
+      }
+
+      if (source === 'camera') {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') return;
+        const result = await ImagePicker.launchCameraAsync({ quality: 0.85, allowsEditing: true, aspect: [1, 1] });
+        if (!result.canceled && result.assets[0]) {
+          setAvatarUri(result.assets[0].uri);
+          setAvatarFile(null);
+          await uploadAvatar(result.assets[0].uri, null);
+        }
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') return;
+        const result = await ImagePicker.launchImageLibraryAsync({ quality: 0.85, allowsEditing: true, aspect: [1, 1] });
+        if (!result.canceled && result.assets[0]) {
+          setAvatarUri(result.assets[0].uri);
+          setAvatarFile(null);
+          await uploadAvatar(result.assets[0].uri, null);
+        }
+      }
+    } catch {
+      // silently ignore picker errors
+    }
+  };
+
+  const uploadAvatar = async (uri: string, file: File | null) => {
+    if (!user?.id || !isSupabaseConfigured()) return;
+    setAvatarUploading(true);
+    try {
+      let blob: Blob;
+      if (file instanceof File) {
+        blob = file;
+      } else {
+        const resp = await fetch(uri);
+        blob = await resp.blob();
+      }
+
+      const ext = blob.type.includes('png') ? 'png' : 'jpg';
+      const path = `${user.id}.${ext}`;
+
+      const { error } = await supabase.storage
+        .from(BUCKETS.PROFILE_PICTURES)
+        .upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
+
+      if (!error) {
+        const { data: { publicUrl } } = supabase.storage
+          .from(BUCKETS.PROFILE_PICTURES)
+          .getPublicUrl(path);
+
+        // Cache-bust the URL so the image always refreshes
+        const bustedUrl = `${publicUrl}?t=${Date.now()}`;
+        await supabase.from(TABLES.PROFILES).update({ avatar_url: bustedUrl }).eq('id', user.id);
+        updateAvatar(bustedUrl);
+      }
+    } catch {
+      // upload failure is silent — avatar preview still shows
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const currentAvatarUri = avatarUri || user?.avatar_url || null;
 
   const initials = (user?.full_name || 'T')
     .split(' ')
@@ -135,13 +218,33 @@ export function ProfileScreen({ navigation }: Props) {
           </View>
         ) : null}
 
+        {/* Profile Header with Avatar */}
         <View style={styles.profileHeader}>
-          <LinearGradient
-            colors={[Colors.goldLight, Colors.gold, Colors.goldDark]}
-            style={styles.avatar}
+          <TouchableOpacity
+            style={styles.avatarWrapper}
+            onPress={() => setShowAvatarPicker(true)}
+            activeOpacity={0.8}
           >
-            <Text style={styles.avatarText}>{initials}</Text>
-          </LinearGradient>
+            {currentAvatarUri ? (
+              <Image source={{ uri: currentAvatarUri }} style={styles.avatarImage} resizeMode="cover" />
+            ) : (
+              <LinearGradient
+                colors={['#F0CC50', '#D4AF37', '#A8860A']}
+                style={styles.avatar}
+              >
+                <Text style={styles.avatarText}>{initials}</Text>
+              </LinearGradient>
+            )}
+
+            {/* Camera overlay */}
+            <View style={styles.avatarEditBadge}>
+              {avatarUploading
+                ? <Text style={styles.avatarEditIcon}>⏳</Text>
+                : <Text style={styles.avatarEditIcon}>📷</Text>
+              }
+            </View>
+          </TouchableOpacity>
+
           <Text style={styles.name}>{user?.full_name}</Text>
           <Text style={styles.email}>{user?.email}</Text>
           {user?.role === 'admin' && (
@@ -149,23 +252,26 @@ export function ProfileScreen({ navigation }: Props) {
               <Text style={styles.adminBadgeText}>⚙️ Trip Admin</Text>
             </View>
           )}
+          <Text style={styles.avatarHint}>Tap photo to change</Text>
         </View>
 
+        {/* Contact Information */}
         <Text style={styles.sectionTitle}>Contact Information</Text>
         <Card style={styles.section}>
           {editMode ? (
             <>
               <GoldInput label="Phone" placeholder="+1 555 000 0000" value={phone} onChangeText={setPhone} keyboardType="phone-pad" icon="📞" />
-              <GoldInput label="Instagram" placeholder="@yourusername" value={instagram} onChangeText={setInstagram} autoCapitalize="none" icon="📷" />
+              <GoldInput label="Instagram" placeholder="@yourusername" value={instagram} onChangeText={setInstagram} autoCapitalize="none" icon="📱" />
             </>
           ) : (
             <>
               <InfoRow icon="📞" label="Phone" value={phone || 'Not added'} />
-              <InfoRow icon="📷" label="Instagram" value={instagram ? `@${instagram}` : 'Not added'} />
+              <InfoRow icon="📱" label="Instagram" value={instagram ? `@${instagram}` : 'Not added'} />
             </>
           )}
         </Card>
 
+        {/* Travel Documents */}
         <Text style={styles.sectionTitle}>Travel Documents</Text>
         <Card style={styles.section}>
           {editMode ? (
@@ -173,49 +279,13 @@ export function ProfileScreen({ navigation }: Props) {
               <GoldInput label="Passport Number" placeholder="A1234567" value={passportNumber} onChangeText={setPassportNumber} icon="🛂" />
               <GoldInput label="Nationality" placeholder="American" value={nationality} onChangeText={setNationality} icon="🌍" />
               <GoldInput label="Date of Birth" placeholder="YYYY-MM-DD" value={dob} onChangeText={setDob} icon="🎂" />
+              <GoldInput label="Dietary Restrictions" placeholder="Vegetarian, Halal, etc." value={dietaryRestrictions} onChangeText={setDietaryRestrictions} icon="🥗" multiline />
             </>
           ) : (
             <>
               <InfoRow icon="🛂" label="Passport" value={passportNumber ? (showSensitive ? passportNumber : '••••••••') : 'Not added'} />
               <InfoRow icon="🌍" label="Nationality" value={nationality || 'Not added'} />
               <InfoRow icon="🎂" label="Date of Birth" value={dob ? (showSensitive ? dob : '••/••/••••') : 'Not added'} />
-            </>
-          )}
-        </Card>
-
-        <Text style={styles.sectionTitle}>Emergency Contact</Text>
-        <Card style={styles.section}>
-          {editMode ? (
-            <>
-              <GoldInput label="Name" placeholder="Contact name" value={emergencyName} onChangeText={setEmergencyName} icon="👤" />
-              <GoldInput label="Relationship" placeholder="Mother / Friend" value={emergencyRelation} onChangeText={setEmergencyRelation} icon="🤝" />
-              <GoldInput label="Phone" placeholder="+1 555 000 0000" value={emergencyPhone} onChangeText={setEmergencyPhone} keyboardType="phone-pad" icon="📞" />
-              <GoldInput label="Email" placeholder="contact@email.com" value={emergencyEmail} onChangeText={setEmergencyEmail} keyboardType="email-address" autoCapitalize="none" icon="✉️" />
-            </>
-          ) : (
-            <>
-              <InfoRow icon="👤" label="Name" value={emergencyName || 'Not added'} />
-              <InfoRow icon="🤝" label="Relationship" value={emergencyRelation || 'Not added'} />
-              <InfoRow icon="📞" label="Phone" value={emergencyPhone || 'Not added'} />
-              <InfoRow icon="✉️" label="Email" value={emergencyEmail || 'Not added'} />
-            </>
-          )}
-        </Card>
-
-        <Text style={styles.sectionTitle}>Medical Information</Text>
-        <Card style={styles.section}>
-          {editMode ? (
-            <>
-              <GoldInput label="Allergies" placeholder="e.g. Penicillin, shellfish" value={allergies} onChangeText={setAllergies} icon="⚠️" multiline />
-              <GoldInput label="Medications" placeholder="Current medications" value={medications} onChangeText={setMedications} icon="💊" multiline />
-              <GoldInput label="Blood Type" placeholder="A+, B-, O+, etc." value={bloodType} onChangeText={setBloodType} icon="🩸" />
-              <GoldInput label="Dietary Restrictions" placeholder="Vegetarian, Halal, etc." value={dietaryRestrictions} onChangeText={setDietaryRestrictions} icon="🥗" multiline />
-            </>
-          ) : (
-            <>
-              <InfoRow icon="⚠️" label="Allergies" value={allergies || 'None listed'} />
-              <InfoRow icon="💊" label="Medications" value={medications || 'None listed'} />
-              <InfoRow icon="🩸" label="Blood Type" value={bloodType || 'Not added'} />
               <InfoRow icon="🥗" label="Dietary" value={dietaryRestrictions || 'None listed'} />
             </>
           )}
@@ -253,6 +323,33 @@ export function ProfileScreen({ navigation }: Props) {
         <View style={{ height: Spacing.xl }} />
       </ScrollView>
 
+      {/* Avatar source picker */}
+      <Modal visible={showAvatarPicker} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.pickerOverlay}
+          activeOpacity={1}
+          onPress={() => setShowAvatarPicker(false)}
+        >
+          <View style={styles.pickerSheet}>
+            <Text style={styles.pickerTitle}>Update Profile Picture</Text>
+            <TouchableOpacity style={styles.pickerOption} onPress={() => pickAvatar('camera')}>
+              <Text style={styles.pickerIcon}>📷</Text>
+              <Text style={styles.pickerLabel}>
+                {Platform.OS === 'web' ? 'Take Photo / Upload' : 'Take Photo'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.pickerOption} onPress={() => pickAvatar('library')}>
+              <Text style={styles.pickerIcon}>🖼️</Text>
+              <Text style={styles.pickerLabel}>Choose from Gallery</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.pickerOption, styles.pickerCancel]} onPress={() => setShowAvatarPicker(false)}>
+              <Text style={[styles.pickerLabel, { color: Colors.textMuted }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Sign Out confirm */}
       <Modal visible={showSignOutConfirm} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
@@ -328,9 +425,54 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.base,
   },
   errorText: { color: Colors.error, fontSize: Typography.sizes.sm, fontWeight: '600' },
-  profileHeader: { alignItems: 'center', paddingVertical: Spacing.xl, marginBottom: Spacing.base },
-  avatar: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md },
-  avatarText: { color: Colors.black, fontSize: Typography.sizes['2xl'], fontWeight: '900' },
+
+  // Profile header
+  profileHeader: {
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+    marginBottom: Spacing.base,
+  },
+  avatarWrapper: {
+    position: 'relative',
+    marginBottom: Spacing.md,
+  },
+  avatar: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: Colors.gold + '60',
+  },
+  avatarImage: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 2,
+    borderColor: Colors.gold + '60',
+  },
+  avatarText: { color: Colors.black, fontSize: Typography.sizes['3xl'], fontWeight: '900' },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.safariGreen,
+    borderWidth: 2,
+    borderColor: Colors.black,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarEditIcon: { fontSize: 13 },
+  avatarHint: {
+    color: Colors.textMuted,
+    fontSize: Typography.sizes.xs,
+    marginTop: Spacing.xs,
+    letterSpacing: 0.3,
+  },
   name: { color: Colors.textPrimary, fontSize: Typography.sizes.xl, fontWeight: '800', marginBottom: 4 },
   email: { color: Colors.textSecondary, fontSize: Typography.sizes.base, marginBottom: Spacing.sm },
   adminBadge: {
@@ -343,6 +485,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
   adminBadgeText: { color: Colors.gold, fontSize: Typography.sizes.sm, fontWeight: '700' },
+
   sectionTitle: { color: Colors.textPrimary, fontSize: Typography.sizes.base, fontWeight: '700', marginBottom: Spacing.sm, marginTop: Spacing.lg },
   section: { gap: 0, padding: Spacing.base },
   privacyRow: {
@@ -359,6 +502,56 @@ const styles = StyleSheet.create({
   },
   privacyLabel: { color: Colors.textSecondary, fontSize: Typography.sizes.base, fontWeight: '600' },
   signOut: { marginTop: Spacing.xl },
+
+  // Avatar picker sheet
+  pickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  pickerSheet: {
+    backgroundColor: Colors.cardBg,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    paddingBottom: Spacing['2xl'],
+    borderTopWidth: 1,
+    borderColor: Colors.gold + '30',
+    gap: Spacing.sm,
+  },
+  pickerTitle: {
+    color: Colors.gold,
+    fontSize: Typography.sizes.md,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+    letterSpacing: 0.5,
+  },
+  pickerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingVertical: Spacing.base,
+    paddingHorizontal: Spacing.base,
+    backgroundColor: Colors.surfaceBg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+  },
+  pickerCancel: {
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    marginTop: Spacing.xs,
+  },
+  pickerIcon: { fontSize: 22 },
+  pickerLabel: {
+    color: Colors.textPrimary,
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+  },
+
+  // Sign out modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
   modalBox: {
     backgroundColor: Colors.cardBg,
