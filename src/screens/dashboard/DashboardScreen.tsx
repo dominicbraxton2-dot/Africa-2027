@@ -15,6 +15,7 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme
 import { Card } from '../../components/common/Card';
 import { useAuthStore } from '../../store/authStore';
 import { useTripStore } from '../../store/tripStore';
+import { Itinerary, ITINERARY_CATEGORIES } from '../../types';
 import { differenceInDays, format } from 'date-fns';
 
 const { width } = Dimensions.get('window');
@@ -30,12 +31,6 @@ const QUICK_ACTIONS = [
   { id: 'updates', label: 'Updates', icon: '📢', screen: 'Announcements' },
 ];
 
-const DESTINATION_SCENES = [
-  { flag: '🌴', name: 'Stone Town', location: 'Zanzibar', color1: Colors.teal + 'CC', color2: '#0A2A20', note: 'UNESCO World Heritage Site' },
-  { flag: '🦁', name: 'Safari', location: 'Tanzania', color1: Colors.amber + 'CC', color2: '#1A0A00', note: 'Wildlife & Adventure' },
-  { flag: '🏔', name: 'Table Mountain', location: 'Cape Town', color1: Colors.safariGreen + 'CC', color2: '#0A1520', note: 'New 7 Wonders of Nature' },
-  { flag: '🍷', name: 'Wine Country', location: 'Stellenbosch', color1: '#4A1A3A' + 'CC', color2: '#1A0A10', note: 'World-class vineyards' },
-];
 
 interface Props {
   navigation: any;
@@ -69,7 +64,7 @@ function useCountdown(target: Date) {
 export function DashboardScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const { fetchAllUsers, fetchExpenses, allUsers } = useTripStore();
+  const { fetchAllUsers, fetchExpenses, fetchItineraries, allUsers, itineraries } = useTripStore();
   const [refreshing, setRefreshing] = useState(false);
   const shimmerAnim = useRef(new Animated.Value(0)).current;
   const timeLeft = useCountdown(DEPARTURE_DATE);
@@ -78,6 +73,7 @@ export function DashboardScreen({ navigation }: Props) {
   useEffect(() => {
     fetchAllUsers();
     fetchExpenses();
+    fetchItineraries();
   }, []);
 
   useEffect(() => {
@@ -91,7 +87,7 @@ export function DashboardScreen({ navigation }: Props) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchAllUsers(), fetchExpenses()]);
+    await Promise.all([fetchAllUsers(), fetchExpenses(), fetchItineraries()]);
     setRefreshing(false);
   };
 
@@ -240,29 +236,86 @@ export function DashboardScreen({ navigation }: Props) {
           ))}
         </View>
 
-        {/* Destination Scenes */}
-        <Text style={styles.sectionTitle}>The Journey</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.destRow}
-        >
-          {DESTINATION_SCENES.map((scene, i) => (
-            <View key={i} style={[styles.destCard, i < DESTINATION_SCENES.length - 1 && { marginRight: Spacing.md }]}>
+        {/* The Journey — real itinerary documents only */}
+        <View style={styles.journeyHeader}>
+          <Text style={styles.sectionTitle}>The Journey</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Itinerary')}>
+            <Text style={styles.viewAll}>View all →</Text>
+          </TouchableOpacity>
+        </View>
+
+        {itineraries.length === 0 ? (
+          <View style={styles.journeyEmpty}>
+            <Text style={styles.journeyEmptyIcon}>📋</Text>
+            <Text style={styles.journeyEmptyTitle}>No itinerary items have been added yet.</Text>
+            <TouchableOpacity
+              style={styles.journeyUploadBtn}
+              onPress={() => navigation.navigate('Itinerary')}
+              activeOpacity={0.8}
+            >
               <LinearGradient
-                colors={[scene.color1, scene.color2]}
-                style={styles.destCardGrad}
+                colors={['#F0CC50', '#D4AF37', '#A8860A']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.journeyUploadGrad}
               >
-                <Text style={styles.destFlag}>{scene.flag}</Text>
-                <Text style={styles.destName}>{scene.name}</Text>
-                <Text style={styles.destLocation}>{scene.location}</Text>
-                <View style={styles.destNotePill}>
-                  <Text style={styles.destNoteText}>{scene.note}</Text>
-                </View>
+                <Text style={styles.journeyUploadText}>Upload Itinerary</Text>
               </LinearGradient>
-            </View>
-          ))}
-        </ScrollView>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.destRow}
+          >
+            {itineraries.slice(0, 8).map((item, i) => {
+              const catMeta = ITINERARY_CATEGORIES.find((c) => c.key === item.category);
+              const destFlag = item.destination === 'zanzibar' ? '🇹🇿'
+                : item.destination === 'cape_town' ? '🇿🇦' : '🌍';
+              const destLabel = item.destination === 'zanzibar' ? 'Zanzibar'
+                : item.destination === 'cape_town' ? 'Cape Town' : 'Both Destinations';
+              const gradColors: [string, string] =
+                item.destination === 'zanzibar'
+                  ? [Colors.teal + '90', Colors.safariGreenDark]
+                  : item.destination === 'cape_town'
+                  ? [Colors.safariGreen + '90', '#0A1510']
+                  : [Colors.amber + '60', Colors.safariGreenDark];
+
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  style={[styles.destCard, i < itineraries.length - 1 && { marginRight: Spacing.md }]}
+                  onPress={() => navigation.navigate('Itinerary')}
+                  activeOpacity={0.85}
+                >
+                  <LinearGradient colors={gradColors} style={styles.destCardGrad}>
+                    <View style={styles.destCardTop}>
+                      <Text style={styles.destFlag}>{destFlag}</Text>
+                      {catMeta && (
+                        <View style={styles.destCatBadge}>
+                          <Text style={styles.destCatIcon}>{catMeta.icon}</Text>
+                          <Text style={styles.destCatLabel}>{catMeta.label}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.destName} numberOfLines={2}>{item.title}</Text>
+                    <Text style={styles.destLocation}>{destLabel}</Text>
+                    {(item.start_date || item.end_date) && (
+                      <View style={styles.destNotePill}>
+                        <Text style={styles.destNoteText}>
+                          {item.start_date ? format(new Date(item.start_date), 'MMM d') : ''}
+                          {item.start_date && item.end_date ? ' – ' : ''}
+                          {item.end_date ? format(new Date(item.end_date), 'MMM d') : ''}
+                        </Text>
+                      </View>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
 
         {/* The Group */}
         <View style={styles.groupHeader}>
@@ -527,13 +580,57 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Destination scenes
+  // The Journey — dynamic itinerary cards
+  journeyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  journeyEmpty: {
+    alignItems: 'center',
+    paddingVertical: Spacing['2xl'],
+    paddingHorizontal: Spacing.xl,
+    marginBottom: Spacing.xl,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+    borderStyle: 'dashed',
+    backgroundColor: Colors.surfaceBg + '50',
+  },
+  journeyEmptyIcon: {
+    fontSize: 40,
+    marginBottom: Spacing.md,
+    opacity: 0.5,
+  },
+  journeyEmptyTitle: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.base,
+    textAlign: 'center',
+    marginBottom: Spacing.lg,
+    lineHeight: 22,
+  },
+  journeyUploadBtn: {
+    borderRadius: BorderRadius.md,
+    overflow: 'hidden',
+  },
+  journeyUploadGrad: {
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+  },
+  journeyUploadText: {
+    color: Colors.black,
+    fontSize: Typography.sizes.base,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   destRow: {
     paddingBottom: Spacing.sm,
     marginBottom: Spacing.lg,
   },
   destCard: {
-    width: width * 0.58,
+    width: width * 0.62,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
     borderWidth: 1,
@@ -541,22 +638,46 @@ const styles = StyleSheet.create({
   },
   destCardGrad: {
     padding: Spacing.base,
-    minHeight: 160,
+    minHeight: 148,
     justifyContent: 'flex-end',
   },
+  destCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.sm,
+  },
   destFlag: {
-    fontSize: 36,
-    marginBottom: Spacing.xs,
+    fontSize: 28,
+  },
+  destCatBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.black + '60',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+  },
+  destCatIcon: { fontSize: 12 },
+  destCatLabel: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.xs,
+    fontWeight: '600',
   },
   destName: {
     color: Colors.textPrimary,
-    fontSize: Typography.sizes.xl,
+    fontSize: Typography.sizes.md,
     fontWeight: '800',
+    lineHeight: 22,
   },
   destLocation: {
     color: Colors.textSecondary,
     fontSize: Typography.sizes.sm,
     marginBottom: Spacing.sm,
+    marginTop: 2,
   },
   destNotePill: {
     alignSelf: 'flex-start',
