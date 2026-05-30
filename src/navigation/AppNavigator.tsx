@@ -123,7 +123,7 @@ function HubScreen({ navigation }: any) {
 
       <View style={hubStyles.header}>
         <Text style={hubStyles.title}>Expedition Hub</Text>
-        <Text style={hubStyles.subtitle}>🌍 Zanzibar & Cape Town 2027</Text>
+        <Text style={hubStyles.subtitle}>🌍 Cape Town & Zanzibar 2027</Text>
         <View style={hubStyles.divider}>
           <LinearGradient
             colors={['transparent', Colors.gold + '60', 'transparent']}

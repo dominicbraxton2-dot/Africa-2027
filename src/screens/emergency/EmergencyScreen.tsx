@@ -23,7 +23,7 @@ function callNumber(number: string) {
 }
 
 export function EmergencyScreen({ navigation }: Props) {
-  const [activeTab, setActiveTab] = useState<'zanzibar' | 'cape_town'>('zanzibar');
+  const [activeTab, setActiveTab] = useState<'cape_town' | 'zanzibar'>('cape_town');
   const info = EMERGENCY_INFO.find((e) => e.destination === activeTab)!;
 
   return (
@@ -36,7 +36,7 @@ export function EmergencyScreen({ navigation }: Props) {
 
       {/* Tab switcher */}
       <View style={styles.tabs}>
-        {(['zanzibar', 'cape_town'] as const).map((tab) => (
+        {(['cape_town', 'zanzibar'] as const).map((tab) => (
           <TouchableOpacity
             key={tab}
             style={[styles.tab, activeTab === tab && styles.activeTab]}

@@ -37,7 +37,7 @@ export function MemoryScreen({ navigation }: Props) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [caption, setCaption] = useState('');
-  const [destination, setDestination] = useState<'zanzibar' | 'cape_town'>('zanzibar');
+  const [destination, setDestination] = useState<'cape_town' | 'zanzibar'>('cape_town');
   const [pendingImage, setPendingImage] = useState<any>(null);
   const [saving, setSaving] = useState(false);
 
@@ -138,7 +138,7 @@ export function MemoryScreen({ navigation }: Props) {
 
       {/* Destination filter */}
       <View style={styles.tabRow}>
-        {([['all', '🌍 All'], ['zanzibar', '🇹🇿 Zanzibar'], ['cape_town', '🇿🇦 Cape Town']] as const).map(([key, label]) => (
+        {([['all', '🌍 All'], ['cape_town', '🇿🇦 Cape Town'], ['zanzibar', '🇹🇿 Zanzibar']] as const).map(([key, label]) => (
           <TouchableOpacity
             key={key}
             onPress={() => setActiveDestination(key)}
@@ -186,7 +186,7 @@ export function MemoryScreen({ navigation }: Props) {
           <EmptyState
             icon="📸"
             title="No Memories Yet"
-            subtitle="Capture photos and notes from your adventure in Zanzibar and Cape Town."
+            subtitle="Capture photos and notes from your adventure in Cape Town and Zanzibar."
             action={{ label: 'Add First Memory', onPress: pickPhoto }}
           />
         )}
@@ -237,7 +237,7 @@ export function MemoryScreen({ navigation }: Props) {
 
             <Text style={styles.fieldLabel}>DESTINATION</Text>
             <View style={styles.destRow}>
-              {([['zanzibar', '🇹🇿 Zanzibar'], ['cape_town', '🇿🇦 Cape Town']] as const).map(([key, label]) => (
+              {([['cape_town', '🇿🇦 Cape Town'], ['zanzibar', '🇹🇿 Zanzibar']] as const).map(([key, label]) => (
                 <TouchableOpacity
                   key={key}
                   onPress={() => setDestination(key)}

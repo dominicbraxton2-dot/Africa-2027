@@ -203,11 +203,11 @@ export function DashboardScreen({ navigation }: Props) {
 
             <View style={styles.heroDestRow}>
               <View style={styles.heroDestTag}>
-                <Text style={styles.heroDestText}>🇹🇿 Zanzibar</Text>
+                <Text style={styles.heroDestText}>🇿🇦 Cape Town</Text>
               </View>
               <Text style={styles.heroDestSep}>✦</Text>
               <View style={styles.heroDestTag}>
-                <Text style={styles.heroDestText}>🇿🇦 Cape Town</Text>
+                <Text style={styles.heroDestText}>🇹🇿 Zanzibar</Text>
               </View>
             </View>
 

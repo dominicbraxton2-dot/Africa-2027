@@ -77,11 +77,11 @@ export function LoginScreen() {
             <Text style={styles.title}>Andretta's Birthday{'\n'}Expedition</Text>
             <View style={styles.tagRow}>
               <View style={styles.tag}>
-                <Text style={styles.tagText}>🇹🇿 Zanzibar</Text>
+                <Text style={styles.tagText}>🇿🇦 Cape Town</Text>
               </View>
               <View style={styles.tagDot} />
               <View style={styles.tag}>
-                <Text style={styles.tagText}>🇿🇦 Cape Town</Text>
+                <Text style={styles.tagText}>🇹🇿 Zanzibar</Text>
               </View>
             </View>
             <Text style={styles.dates}>January 14 – 27, 2027</Text>

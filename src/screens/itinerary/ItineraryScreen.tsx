@@ -65,8 +65,8 @@ function DocThumb({ uri, fallbackIcon, fallbackColor }: { uri: string; fallbackI
 
 const DESTINATION_OPTIONS = [
   { key: 'both' as const, label: '🌍 Both', color: Colors.gold },
-  { key: 'zanzibar' as const, label: '🇹🇿 Zanzibar', color: '#1A8C7A' },
   { key: 'cape_town' as const, label: '🇿🇦 Cape Town', color: '#4A8CE8' },
+  { key: 'zanzibar' as const, label: '🇹🇿 Zanzibar', color: '#1A8C7A' },
 ];
 
 interface Props {
