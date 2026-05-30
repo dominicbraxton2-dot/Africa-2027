@@ -9,9 +9,15 @@ import { AppNavigator } from './src/navigation/AppNavigator';
 import { Colors } from './src/constants/theme';
 
 export default function App() {
-  const { setSession, setLoading, loading, refreshUser } = useAuthStore();
+  const { setSession, setLoading, loading, refreshUser, isDemoMode } = useAuthStore();
 
   useEffect(() => {
+    // In demo mode the session is managed locally — skip Supabase entirely.
+    if (isDemoMode) {
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
@@ -29,7 +35,7 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [isDemoMode]);
 
   if (loading) {
     return (

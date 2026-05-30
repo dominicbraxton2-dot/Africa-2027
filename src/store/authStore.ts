@@ -1,11 +1,23 @@
 import { create } from 'zustand';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { User } from '../types';
+
+const DEMO_USER: User = {
+  id: 'demo-user-id',
+  email: 'demo@africa2027.com',
+  full_name: 'Demo Traveler',
+  role: 'traveler',
+  created_at: new Date().toISOString(),
+};
+
+const DEMO_EMAIL = 'demo@africa2027.com';
+const DEMO_PASSWORD = 'demo1234';
 
 interface AuthState {
   user: User | null;
   session: any | null;
   loading: boolean;
+  isDemoMode: boolean;
   setUser: (user: User | null) => void;
   setSession: (session: any | null) => void;
   setLoading: (loading: boolean) => void;
@@ -19,38 +31,75 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   session: null,
   loading: true,
+  isDemoMode: false,
 
   setUser: (user) => set({ user }),
   setSession: (session) => set({ session }),
   setLoading: (loading) => set({ loading }),
 
   signIn: async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const trimmedEmail = email.trim().toLowerCase();
+
+    const isDemoCredentials = trimmedEmail === DEMO_EMAIL && password === DEMO_PASSWORD;
+    const noSupabase = !isSupabaseConfigured();
+
+    // Accept demo credentials regardless of Supabase state
+    if (isDemoCredentials) {
+      set({ user: DEMO_USER, session: { access_token: 'demo' }, isDemoMode: true, loading: false });
+      return { error: null };
+    }
+
+    // If Supabase isn't configured, reject non-demo credentials with a clear message
+    if (noSupabase) {
+      return {
+        error: {
+          message:
+            'Supabase is not connected yet. Use demo@africa2027.com / demo1234 to preview the app.',
+        },
+      };
+    }
+
+    // Real Supabase sign-in
+    const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (!error && data.session) {
-      set({ session: data.session });
+      set({ session: data.session, isDemoMode: false });
       await get().refreshUser();
     }
     return { error };
   },
 
   signUp: async (email, password, fullName) => {
+    if (!isSupabaseConfigured()) {
+      return {
+        error: {
+          message:
+            'Supabase is not connected yet. Use demo@africa2027.com / demo1234 to preview the app.',
+        },
+      };
+    }
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { full_name: fullName } },
     });
     if (!error && data.session) {
-      set({ session: data.session });
+      set({ session: data.session, isDemoMode: false });
     }
     return { error };
   },
 
   signOut: async () => {
-    await supabase.auth.signOut();
-    set({ user: null, session: null });
+    const { isDemoMode } = get();
+    if (!isDemoMode) {
+      await supabase.auth.signOut();
+    }
+    set({ user: null, session: null, isDemoMode: false });
   },
 
   refreshUser: async () => {
+    if (get().isDemoMode) return;
+
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (!authUser) return;
 
@@ -63,7 +112,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (data) {
       set({ user: data as User });
     } else {
-      // Create user record if it doesn't exist
       const newUser: Partial<User> = {
         id: authUser.id,
         email: authUser.email || '',

@@ -141,12 +141,13 @@ function TabNavigator() {
 // ── Root Navigator ────────────────────────────────────────────────────────────
 
 export function AppNavigator() {
-  const { session } = useAuthStore();
+  const { session, isDemoMode } = useAuthStore();
+  const isAuthenticated = !!session || isDemoMode;
 
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {!session ? (
+        {!isAuthenticated ? (
           <Stack.Screen name="Login" component={LoginScreen} />
         ) : (
           <>
