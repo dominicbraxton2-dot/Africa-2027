@@ -3,7 +3,6 @@
   "installCommand": "npm install",
   "outputDirectory": "dist",
   "framework": null,
-  "nodeVersion": "20.x",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ],
