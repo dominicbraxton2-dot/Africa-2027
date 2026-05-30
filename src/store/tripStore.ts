@@ -45,14 +45,15 @@ interface TripState {
 
   addExpense: (expense: Omit<Expense, 'id' | 'created_at'> & { participants: ExpenseParticipant[] }) => Promise<void>;
   addSettlement: (settlement: Omit<Settlement, 'id' | 'created_at'>) => Promise<void>;
-  uploadItinerary: (file: any, metadata: Partial<Itinerary>) => Promise<void>;
+  // asset is the raw DocumentPicker asset object (handles web File and native URI)
+  uploadItinerary: (asset: any, metadata: Partial<Itinerary>) => Promise<void>;
   addMemory: (memory: Omit<MemoryItem, 'id' | 'created_at'>) => Promise<void>;
   deleteItinerary: (id: string) => Promise<void>;
 
-  // Deprecated aliases kept for backward compat with screens
+  // Aliases for backward compat
   documents: Itinerary[];
   fetchDocuments: () => Promise<void>;
-  uploadDocument: (file: any, metadata: Partial<Itinerary>) => Promise<void>;
+  uploadDocument: (asset: any, metadata: Partial<Itinerary>) => Promise<void>;
   deleteDocument: (id: string) => Promise<void>;
 }
 
@@ -96,9 +97,7 @@ export const useTripStore = create<TripState>((set, get) => ({
     }
   },
 
-  fetchDocuments: async () => {
-    return get().fetchItineraries();
-  },
+  fetchDocuments: async () => get().fetchItineraries(),
 
   fetchExpenses: async () => {
     const { data } = await supabase
@@ -185,7 +184,6 @@ export const useTripStore = create<TripState>((set, get) => ({
       }));
 
       await supabase.from(TABLES.EXPENSE_PARTICIPANTS).insert(participantRows);
-
       const newExpense: Expense = { ...created, participants: participantRows };
       set((state) => ({ expenses: [newExpense, ...state.expenses] }));
     }
@@ -203,41 +201,57 @@ export const useTripStore = create<TripState>((set, get) => ({
     }
   },
 
-  uploadItinerary: async (file, metadata) => {
-    const fileName = `${Date.now()}_${metadata.file_name || 'document'}`;
-    const { data: storageData } = await supabase.storage
+  uploadItinerary: async (asset: any, metadata: Partial<Itinerary>) => {
+    const safeName = (metadata.file_name || 'document').replace(/\s/g, '_');
+    const fileName = `${Date.now()}_${safeName}`;
+
+    // Cross-platform file data extraction:
+    // On web, DocumentPicker exposes a browser File object on asset.file.
+    // On native, we fetch the file:// URI and convert it to a Blob.
+    let fileData: File | Blob;
+    if (asset.file instanceof File) {
+      fileData = asset.file;
+    } else {
+      const response = await fetch(asset.uri);
+      fileData = await response.blob();
+    }
+
+    const { data: storageData, error: storageError } = await supabase.storage
       .from(BUCKETS.ITINERARIES)
-      .upload(fileName, file);
+      .upload(fileName, fileData, {
+        contentType: asset.mimeType || 'application/octet-stream',
+        upsert: false,
+      });
 
-    if (storageData) {
-      const { data: { publicUrl } } = supabase.storage
-        .from(BUCKETS.ITINERARIES)
-        .getPublicUrl(fileName);
+    if (storageError) throw new Error(storageError.message);
 
-      const doc: Partial<Itinerary> = {
-        ...metadata,
-        file_url: publicUrl,
-        created_at: new Date().toISOString(),
-      };
+    const { data: { publicUrl } } = supabase.storage
+      .from(BUCKETS.ITINERARIES)
+      .getPublicUrl(fileName);
 
-      const { data: created } = await supabase
-        .from(TABLES.ITINERARIES)
-        .insert(doc)
-        .select()
-        .single();
+    const row: Partial<Itinerary> = {
+      ...metadata,
+      file_url: publicUrl,
+      created_at: new Date().toISOString(),
+    };
 
-      if (created) {
-        set((state) => ({
-          itineraries: [created as Itinerary, ...state.itineraries],
-          documents: [created as Itinerary, ...state.documents],
-        }));
-      }
+    const { data: created, error: insertError } = await supabase
+      .from(TABLES.ITINERARIES)
+      .insert(row)
+      .select()
+      .single();
+
+    if (insertError) throw new Error(insertError.message);
+
+    if (created) {
+      set((state) => ({
+        itineraries: [created as Itinerary, ...state.itineraries],
+        documents: [created as Itinerary, ...state.documents],
+      }));
     }
   },
 
-  uploadDocument: async (file, metadata) => {
-    return get().uploadItinerary(file, metadata);
-  },
+  uploadDocument: async (asset, metadata) => get().uploadItinerary(asset, metadata),
 
   addMemory: async (memory) => {
     const { data: created } = await supabase
@@ -259,7 +273,5 @@ export const useTripStore = create<TripState>((set, get) => ({
     }));
   },
 
-  deleteDocument: async (id) => {
-    return get().deleteItinerary(id);
-  },
+  deleteDocument: async (id) => get().deleteItinerary(id),
 }));

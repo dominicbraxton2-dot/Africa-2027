@@ -83,8 +83,15 @@ CREATE TABLE IF NOT EXISTS public.itineraries (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE public.itineraries ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "itineraries: all read"    ON public.itineraries FOR SELECT USING (auth.uid() IS NOT NULL);
-CREATE POLICY "itineraries: admin write" ON public.itineraries FOR ALL
+CREATE POLICY "itineraries: all read"      ON public.itineraries FOR SELECT USING (auth.uid() IS NOT NULL);
+-- Any authenticated traveler can upload their own itinerary documents
+CREATE POLICY "itineraries: auth insert"   ON public.itineraries FOR INSERT
+  WITH CHECK (auth.uid() IS NOT NULL AND auth.uid() = uploaded_by);
+-- Travelers can delete only their own uploads
+CREATE POLICY "itineraries: own delete"    ON public.itineraries FOR DELETE
+  USING (auth.uid() = uploaded_by);
+-- Admins have full control (UPDATE, DELETE any row)
+CREATE POLICY "itineraries: admin write"   ON public.itineraries FOR ALL
   USING (EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'));
 
 -- ── itinerary_days ───────────────────────────────────────────
@@ -246,3 +253,31 @@ CREATE INDEX IF NOT EXISTS idx_settlements_to        ON public.settlements(to_id
 CREATE INDEX IF NOT EXISTS idx_itinerary_days_date   ON public.itinerary_days(day_date);
 CREATE INDEX IF NOT EXISTS idx_announcements_pinned  ON public.announcements(pinned, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_receipts_profile      ON public.receipts(profile_id);
+CREATE INDEX IF NOT EXISTS idx_itineraries_uploaded_by ON public.itineraries(uploaded_by);
+
+-- ── Storage Bucket Policies ───────────────────────────────────
+-- Run AFTER creating buckets in Supabase Dashboard or via CLI.
+-- Itineraries bucket: any authenticated user can upload & read;
+-- travelers delete their own files, admins delete any file.
+
+-- INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+-- VALUES ('itineraries', 'itineraries', true, 52428800,
+--   '{application/pdf,image/jpeg,image/jpg,image/png,image/heic,image/heif,image/gif,image/webp}')
+-- ON CONFLICT (id) DO NOTHING;
+
+-- CREATE POLICY "storage_itineraries_read" ON storage.objects
+--   FOR SELECT USING (bucket_id = 'itineraries' AND auth.uid() IS NOT NULL);
+
+-- CREATE POLICY "storage_itineraries_insert" ON storage.objects
+--   FOR INSERT WITH CHECK (bucket_id = 'itineraries' AND auth.uid() IS NOT NULL);
+
+-- CREATE POLICY "storage_itineraries_delete_own" ON storage.objects
+--   FOR DELETE USING (
+--     bucket_id = 'itineraries' AND auth.uid()::text = (storage.foldername(name))[1]
+--   );
+
+-- CREATE POLICY "storage_itineraries_delete_admin" ON storage.objects
+--   FOR DELETE USING (
+--     bucket_id = 'itineraries' AND
+--     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+--   );

@@ -8,36 +8,60 @@ import {
   Linking,
   Modal,
   ScrollView,
-  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { ScreenHeader } from '../../components/common/ScreenHeader';
 import { Card } from '../../components/common/Card';
 import { GoldButton } from '../../components/common/GoldButton';
+import { GoldInput } from '../../components/common/GoldInput';
 import { EmptyState } from '../../components/common/EmptyState';
 import { useTripStore } from '../../store/tripStore';
 import { useAuthStore } from '../../store/authStore';
 import { Itinerary, ItineraryCategory, ITINERARY_CATEGORIES } from '../../types';
+import { format } from 'date-fns';
+
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'gif', 'webp', 'bmp'];
+
+function isImageFile(filename?: string): boolean {
+  if (!filename) return false;
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  return IMAGE_EXTENSIONS.includes(ext);
+}
+
+const DESTINATION_OPTIONS = [
+  { key: 'both' as const, label: '🌍 Both', color: Colors.gold },
+  { key: 'zanzibar' as const, label: '🇹🇿 Zanzibar', color: '#1A8C7A' },
+  { key: 'cape_town' as const, label: '🇿🇦 Cape Town', color: '#4A8CE8' },
+];
 
 interface Props {
   navigation: any;
 }
 
 export function ItineraryScreen({ navigation }: Props) {
-  const { documents: itineraries, fetchDocuments, uploadDocument, deleteDocument } = useTripStore();
+  const { documents: itineraries, fetchDocuments, uploadDocument, deleteDocument, allUsers, fetchAllUsers } = useTripStore();
   const { user } = useAuthStore();
+  const isAdmin = user?.role === 'admin';
+
   const [selectedCategory, setSelectedCategory] = useState<ItineraryCategory | 'all'>('all');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [pendingFile, setPendingFile] = useState<any>(null);
-  const [selectedUploadCategory, setSelectedUploadCategory] = useState<ItineraryCategory>('general');
+  const [pendingAsset, setPendingAsset] = useState<any>(null);
+  const [uploadTitle, setUploadTitle] = useState('');
+  const [uploadDescription, setUploadDescription] = useState('');
+  const [uploadCategory, setUploadCategory] = useState<ItineraryCategory>('general');
+  const [uploadDestination, setUploadDestination] = useState<'zanzibar' | 'cape_town' | 'both'>('both');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     fetchDocuments();
+    fetchAllUsers();
   }, []);
 
   const filtered = selectedCategory === 'all'
@@ -48,44 +72,63 @@ export function ItineraryScreen({ navigation }: Props) {
     setUploadError('');
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'image/*'],
+        // Allow PDFs and all image types including HEIC screenshots
+        type: ['application/pdf', 'image/*', 'image/heic', 'image/heif'],
         copyToCacheDirectory: true,
+        multiple: false,
       });
-      if (result.canceled) return;
-      setPendingFile(result.assets[0]);
-      setSelectedUploadCategory('general');
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const asset = result.assets[0];
+      setPendingAsset(asset);
+      // Pre-fill title from filename (strip extension)
+      setUploadTitle(asset.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '));
+      setUploadDescription('');
+      setUploadCategory('general');
+      setUploadDestination('both');
       setShowUploadModal(true);
     } catch {
-      setUploadError('Failed to pick a file. Please try again.');
+      setUploadError('Could not open the file picker. Please try again.');
     }
   };
 
   const handleConfirmUpload = async () => {
-    if (!pendingFile) return;
+    if (!pendingAsset) return;
+    if (!uploadTitle.trim()) {
+      setUploadError('Please enter a title for this document.');
+      return;
+    }
     setShowUploadModal(false);
     setUploading(true);
     setUploadError('');
     try {
-      await uploadDocument(pendingFile as any, {
-        title: pendingFile.name.replace(/\.[^.]+$/, ''),
-        category: selectedUploadCategory,
-        file_name: pendingFile.name,
-        file_size: pendingFile.size,
-        destination: 'both',
+      await uploadDocument(pendingAsset, {
+        title: uploadTitle.trim(),
+        description: uploadDescription.trim() || undefined,
+        category: uploadCategory,
+        destination: uploadDestination,
+        file_name: pendingAsset.name,
+        file_size: pendingAsset.size,
         uploaded_by: user?.id || '',
       });
-    } catch {
-      setUploadError('Upload failed. Please check your connection and try again.');
+    } catch (err: any) {
+      setUploadError(err?.message || 'Upload failed. Please check your connection and try again.');
     } finally {
       setUploading(false);
-      setPendingFile(null);
+      setPendingAsset(null);
     }
+  };
+
+  const handleCancelUpload = () => {
+    setShowUploadModal(false);
+    setPendingAsset(null);
+    setUploadError('');
   };
 
   const handleOpen = (doc: Itinerary) => {
     if (doc.file_url) {
       Linking.openURL(doc.file_url).catch(() => {
-        setUploadError('Unable to open this document.');
+        setUploadError(`Could not open "${doc.title}". Try the Download button instead.`);
       });
     }
   };
@@ -96,40 +139,82 @@ export function ItineraryScreen({ navigation }: Props) {
     setConfirmDeleteId(null);
   };
 
+  const canDelete = (doc: Itinerary) =>
+    isAdmin || doc.uploaded_by === user?.id;
+
+  const uploaderName = (uploadedBy?: string) => {
+    if (!uploadedBy) return null;
+    const profile = allUsers.find((u) => u.id === uploadedBy);
+    return profile?.full_name?.split(' ')[0] || null;
+  };
+
   const renderDocument = ({ item }: { item: Itinerary }) => {
     const meta = ITINERARY_CATEGORIES.find((c) => c.key === item.category) || ITINERARY_CATEGORIES[4];
     const sizeKB = item.file_size ? Math.round(item.file_size / 1024) : null;
+    const showImage = isImageFile(item.file_name) && item.file_url;
+    const uploader = uploaderName(item.uploaded_by);
 
     return (
-      <TouchableOpacity onPress={() => handleOpen(item)} activeOpacity={0.8}>
-        <Card style={styles.docCard}>
-          <View style={[styles.docIconBg, { backgroundColor: meta.color + '20' }]}>
-            <Text style={styles.docIcon}>{meta.icon}</Text>
-          </View>
-          <View style={styles.docInfo}>
-            <Text style={styles.docTitle} numberOfLines={2}>{item.title}</Text>
-            <View style={styles.docMeta}>
-              <Text style={[styles.docCategory, { color: meta.color }]}>{meta.label}</Text>
-              {sizeKB && <Text style={styles.docSize}> · {sizeKB}KB</Text>}
-              {item.destination && item.destination !== 'both' && (
-                <Text style={styles.docDest}>
-                  {' '}· {item.destination === 'zanzibar' ? '🇹🇿' : '🇿🇦'}
-                </Text>
-              )}
+      <Card style={styles.docCard}>
+        {/* Thumbnail / icon */}
+        <TouchableOpacity onPress={() => handleOpen(item)} activeOpacity={0.8}>
+          {showImage ? (
+            <Image
+              source={{ uri: item.file_url! }}
+              style={styles.docThumb}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[styles.docIconBg, { backgroundColor: meta.color + '20' }]}>
+              <Text style={styles.docIcon}>{meta.icon}</Text>
             </View>
-          </View>
-          <View style={styles.docActions}>
-            <TouchableOpacity onPress={() => handleOpen(item)} style={styles.docAction}>
-              <Text style={styles.docActionText}>Open</Text>
-            </TouchableOpacity>
-            {isAdmin && (
-              <TouchableOpacity onPress={() => setConfirmDeleteId(item.id)} style={styles.docActionDanger}>
-                <Text style={styles.docActionDangerText}>×</Text>
-              </TouchableOpacity>
+          )}
+        </TouchableOpacity>
+
+        {/* Info */}
+        <View style={styles.docInfo}>
+          <Text style={styles.docTitle} numberOfLines={2}>{item.title}</Text>
+          {item.description ? (
+            <Text style={styles.docDesc} numberOfLines={1}>{item.description}</Text>
+          ) : null}
+          <View style={styles.docMetaRow}>
+            <View style={[styles.catBadge, { backgroundColor: meta.color + '15' }]}>
+              <Text style={[styles.docCategory, { color: meta.color }]}>{meta.icon} {meta.label}</Text>
+            </View>
+            {item.destination && item.destination !== 'both' && (
+              <Text style={styles.destFlag}>
+                {item.destination === 'zanzibar' ? '🇹🇿' : '🇿🇦'}
+              </Text>
             )}
           </View>
-        </Card>
-      </TouchableOpacity>
+          <View style={styles.docSubMeta}>
+            {uploader && <Text style={styles.docMeta}>by {uploader}</Text>}
+            {uploader && item.created_at && <Text style={styles.docMetaDot}> · </Text>}
+            {item.created_at && (
+              <Text style={styles.docMeta}>{format(new Date(item.created_at), 'MMM d')}</Text>
+            )}
+            {sizeKB && <Text style={styles.docMeta}> · {sizeKB < 1000 ? `${sizeKB}KB` : `${(sizeKB / 1024).toFixed(1)}MB`}</Text>}
+          </View>
+        </View>
+
+        {/* Actions */}
+        <View style={styles.docActions}>
+          <TouchableOpacity onPress={() => handleOpen(item)} style={styles.docActionBtn}>
+            <Text style={styles.docActionText}>Open</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => Linking.openURL(item.file_url || '')}
+            style={styles.docActionBtn}
+          >
+            <Text style={styles.docActionText}>↓</Text>
+          </TouchableOpacity>
+          {canDelete(item) && (
+            <TouchableOpacity onPress={() => setConfirmDeleteId(item.id)} style={styles.docDeleteBtn}>
+              <Text style={styles.docDeleteText}>×</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </Card>
     );
   };
 
@@ -141,6 +226,7 @@ export function ItineraryScreen({ navigation }: Props) {
         onBack={() => navigation.goBack()}
       />
 
+      {/* Category filter */}
       <View style={styles.filterContainer}>
         <FlatList
           horizontal
@@ -164,23 +250,20 @@ export function ItineraryScreen({ navigation }: Props) {
         />
       </View>
 
-      {isAdmin && (
-        <View style={styles.uploadContainer}>
-          {uploadError ? (
-            <Text style={styles.uploadError}>{uploadError}</Text>
-          ) : null}
-          <GoldButton
-            title={uploading ? 'Uploading…' : 'Upload Document'}
-            onPress={handlePickFile}
-            loading={uploading}
-            icon="📎"
-            variant="outline"
-            size="sm"
-            style={styles.uploadBtn}
-          />
-        </View>
-      )}
+      {/* Upload bar — visible to ALL authenticated users */}
+      <View style={styles.uploadBar}>
+        {uploadError ? <Text style={styles.uploadError}>{uploadError}</Text> : null}
+        <GoldButton
+          title={uploading ? 'Uploading…' : '📎  Upload File or Image'}
+          onPress={handlePickFile}
+          loading={uploading}
+          variant="outline"
+          size="sm"
+          style={styles.uploadBtn}
+        />
+      </View>
 
+      {/* Document list */}
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
@@ -190,65 +273,117 @@ export function ItineraryScreen({ navigation }: Props) {
         ListEmptyComponent={
           <EmptyState
             icon="📋"
-            title="No Documents Yet"
-            subtitle={isAdmin ? 'Upload itineraries, flight confirmations, and hotel bookings.' : 'The trip organizer will upload documents here.'}
-            action={isAdmin ? { label: 'Upload Document', onPress: handlePickFile } : undefined}
+            title="No Itinerary Documents Yet"
+            subtitle="Upload a file or image to share with the group."
+            action={{ label: 'Upload File or Image', onPress: handlePickFile }}
           />
         }
       />
 
-      {/* Upload category picker modal */}
+      {/* ── Upload Modal ── */}
       <Modal visible={showUploadModal} animationType="slide" presentationStyle="pageSheet" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>Select Category</Text>
-            <Text style={styles.modalSubtitle} numberOfLines={1}>
-              {pendingFile?.name}
-            </Text>
-            <View style={styles.catGrid}>
-              {ITINERARY_CATEGORIES.map((c) => (
-                <TouchableOpacity
-                  key={c.key}
-                  onPress={() => setSelectedUploadCategory(c.key)}
-                  style={[
-                    styles.catChip,
-                    selectedUploadCategory === c.key && { borderColor: c.color, backgroundColor: c.color + '20' },
-                  ]}
-                >
-                  <Text style={styles.catIcon}>{c.icon}</Text>
-                  <Text style={[styles.catLabel, selectedUploadCategory === c.key && { color: c.color }]}>
-                    {c.label}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Upload Document</Text>
+              {pendingAsset && (
+                <View style={styles.filePreviewRow}>
+                  <Text style={styles.filePreviewIcon}>
+                    {isImageFile(pendingAsset.name) ? '🖼️' : '📄'}
                   </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.modalActions}>
-              <GoldButton title="Upload" onPress={handleConfirmUpload} style={{ flex: 1 }} />
-              <GoldButton
-                title="Cancel"
-                onPress={() => { setShowUploadModal(false); setPendingFile(null); }}
-                variant="outline"
-                style={{ marginLeft: Spacing.sm }}
-              />
+                  <Text style={styles.filePreviewName} numberOfLines={1}>{pendingAsset.name}</Text>
+                </View>
+              )}
+
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <GoldInput
+                  label="Title"
+                  placeholder="e.g. Kenya Airways Flight Confirmation"
+                  value={uploadTitle}
+                  onChangeText={(v) => { setUploadTitle(v); setUploadError(''); }}
+                />
+
+                <GoldInput
+                  label="Notes (optional)"
+                  placeholder="Any details about this document..."
+                  value={uploadDescription}
+                  onChangeText={setUploadDescription}
+                  multiline
+                  numberOfLines={2}
+                />
+
+                <Text style={styles.fieldLabel}>CATEGORY</Text>
+                <View style={styles.catGrid}>
+                  {ITINERARY_CATEGORIES.map((c) => (
+                    <TouchableOpacity
+                      key={c.key}
+                      onPress={() => setUploadCategory(c.key)}
+                      style={[
+                        styles.catChip,
+                        uploadCategory === c.key && { borderColor: c.color, backgroundColor: c.color + '20' },
+                      ]}
+                    >
+                      <Text style={styles.catIcon}>{c.icon}</Text>
+                      <Text style={[styles.catLabel, uploadCategory === c.key && { color: c.color }]}>
+                        {c.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.fieldLabel}>DESTINATION</Text>
+                <View style={styles.destGrid}>
+                  {DESTINATION_OPTIONS.map((d) => (
+                    <TouchableOpacity
+                      key={d.key}
+                      onPress={() => setUploadDestination(d.key)}
+                      style={[
+                        styles.destChip,
+                        uploadDestination === d.key && { borderColor: d.color, backgroundColor: d.color + '20' },
+                      ]}
+                    >
+                      <Text style={[styles.destChipText, uploadDestination === d.key && { color: d.color }]}>
+                        {d.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {uploadError ? (
+                  <View style={styles.errorBox}>
+                    <Text style={styles.errorText}>⚠️  {uploadError}</Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.modalActions}>
+                  <GoldButton title="Upload" onPress={handleConfirmUpload} style={{ flex: 1 }} />
+                  <GoldButton
+                    title="Cancel"
+                    onPress={handleCancelUpload}
+                    variant="outline"
+                    style={{ marginLeft: Spacing.sm }}
+                  />
+                </View>
+                <View style={{ height: Spacing.xl }} />
+              </ScrollView>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
-      {/* Delete confirm modal */}
+      {/* ── Delete Confirm Modal ── */}
       <Modal visible={!!confirmDeleteId} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
+          <View style={[styles.modalSheet, styles.deleteSheet]}>
             <Text style={styles.modalTitle}>Delete Document?</Text>
-            <Text style={styles.modalSubtitle}>This action cannot be undone.</Text>
+            <Text style={styles.modalSubtitle}>This cannot be undone.</Text>
             <View style={styles.modalActions}>
-              <GoldButton title="Delete" onPress={handleDeleteConfirm} style={[styles.deleteConfirmBtn, { flex: 1 }]} />
-              <GoldButton
-                title="Cancel"
-                onPress={() => setConfirmDeleteId(null)}
-                variant="outline"
-                style={{ marginLeft: Spacing.sm }}
-              />
+              <GoldButton title="Cancel" onPress={() => setConfirmDeleteId(null)} variant="outline" style={{ flex: 1 }} />
+              <GoldButton title="Delete" onPress={handleDeleteConfirm} style={[{ flex: 1, marginLeft: Spacing.sm }, styles.deleteBtnStyle]} />
             </View>
           </View>
         </View>
@@ -259,7 +394,12 @@ export function ItineraryScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.black },
-  filterContainer: { paddingVertical: Spacing.sm, borderBottomWidth: 1, borderBottomColor: Colors.borderColor },
+
+  filterContainer: {
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderColor,
+  },
   filterList: { paddingHorizontal: Spacing.base, gap: Spacing.sm },
   filterChip: {
     paddingHorizontal: Spacing.md,
@@ -272,37 +412,78 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: Colors.gold, borderColor: Colors.gold },
   filterChipText: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, fontWeight: '600' },
   filterChipTextActive: { color: Colors.black },
-  uploadContainer: {
-    padding: Spacing.base,
+
+  uploadBar: {
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderColor,
   },
   uploadError: {
     color: Colors.error,
     fontSize: Typography.sizes.sm,
-    marginBottom: Spacing.sm,
     fontWeight: '600',
+    marginBottom: Spacing.xs,
   },
   uploadBtn: { alignSelf: 'flex-start' },
+
   list: { padding: Spacing.base, gap: Spacing.sm },
-  docCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-  docIconBg: { width: 48, height: 48, borderRadius: BorderRadius.md, alignItems: 'center', justifyContent: 'center' },
-  docIcon: { fontSize: 24 },
+
+  docCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.md,
+    padding: Spacing.md,
+  },
+  docThumb: {
+    width: 52,
+    height: 52,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surfaceBg,
+  },
+  docIconBg: {
+    width: 52,
+    height: 52,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  docIcon: { fontSize: 26 },
   docInfo: { flex: 1 },
-  docTitle: { color: Colors.textPrimary, fontSize: Typography.sizes.base, fontWeight: '600', marginBottom: 4 },
-  docMeta: { flexDirection: 'row', alignItems: 'center' },
-  docCategory: { fontSize: Typography.sizes.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  docSize: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
-  docDest: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
-  docActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  docAction: {
+  docTitle: {
+    color: Colors.textPrimary,
+    fontSize: Typography.sizes.base,
+    fontWeight: '700',
+    marginBottom: 3,
+  },
+  docDesc: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.sm,
+    marginBottom: Spacing.xs,
+  },
+  docMetaRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginBottom: 4 },
+  catBadge: {
+    paddingHorizontal: Spacing.xs,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
+  docCategory: { fontSize: Typography.sizes.xs, fontWeight: '700' },
+  destFlag: { fontSize: Typography.sizes.sm },
+  docSubMeta: { flexDirection: 'row', flexWrap: 'wrap' },
+  docMeta: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
+  docMetaDot: { color: Colors.textMuted, fontSize: Typography.sizes.xs },
+
+  docActions: { flexDirection: 'column', gap: Spacing.xs, alignItems: 'flex-end' },
+  docActionBtn: {
     paddingHorizontal: Spacing.sm,
     paddingVertical: Spacing.xs,
     backgroundColor: Colors.gold + '20',
     borderRadius: BorderRadius.sm,
+    minWidth: 48,
+    alignItems: 'center',
   },
   docActionText: { color: Colors.gold, fontSize: Typography.sizes.xs, fontWeight: '700' },
-  docActionDanger: {
+  docDeleteBtn: {
     width: 28,
     height: 28,
     alignItems: 'center',
@@ -310,10 +491,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.error + '20',
     borderRadius: BorderRadius.sm,
   },
-  docActionDangerText: { color: Colors.error, fontSize: 18, fontWeight: '700' },
+  docDeleteText: { color: Colors.error, fontSize: 18, fontWeight: '700', lineHeight: 22 },
+
+  // Modal
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.75)',
     justifyContent: 'flex-end',
   },
   modalSheet: {
@@ -321,21 +504,59 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
     padding: Spacing.xl,
+    paddingTop: Spacing.md,
     borderTopWidth: 1,
     borderColor: Colors.borderColor,
+    maxHeight: '90%',
+  },
+  deleteSheet: {
+    maxHeight: 240,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: Colors.borderColor,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: Spacing.base,
   },
   modalTitle: {
     color: Colors.textPrimary,
     fontSize: Typography.sizes.xl,
     fontWeight: '800',
-    marginBottom: Spacing.xs,
+    marginBottom: Spacing.sm,
   },
   modalSubtitle: {
     color: Colors.textSecondary,
     fontSize: Typography.sizes.sm,
     marginBottom: Spacing.xl,
   },
-  catGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.xl },
+  filePreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    backgroundColor: Colors.surfaceBg,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.base,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+  },
+  filePreviewIcon: { fontSize: 20 },
+  filePreviewName: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.sm,
+    flex: 1,
+  },
+  fieldLabel: {
+    color: Colors.textSecondary,
+    fontSize: Typography.sizes.xs,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  catGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.xs },
   catChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -347,8 +568,32 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderColor,
     backgroundColor: Colors.surfaceBg,
   },
-  catIcon: { fontSize: 18 },
+  catIcon: { fontSize: 16 },
   catLabel: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, fontWeight: '600' },
-  modalActions: { flexDirection: 'row' },
-  deleteConfirmBtn: { backgroundColor: Colors.error + '20' },
+
+  destGrid: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.sm },
+  destChip: {
+    flex: 1,
+    paddingVertical: Spacing.sm,
+    alignItems: 'center',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.borderColor,
+    backgroundColor: Colors.surfaceBg,
+  },
+  destChipText: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, fontWeight: '700' },
+
+  errorBox: {
+    backgroundColor: Colors.error + '18',
+    borderWidth: 1,
+    borderColor: Colors.error + '60',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    marginTop: Spacing.sm,
+  },
+  errorText: { color: Colors.error, fontSize: Typography.sizes.sm, fontWeight: '600' },
+
+  modalActions: { flexDirection: 'row', marginTop: Spacing.base },
+  deleteBtnStyle: { backgroundColor: Colors.error + '20' },
 });
