@@ -122,8 +122,8 @@ export function AnnouncementsScreen({ navigation }: Props) {
   return (
     <View style={styles.root}>
       <ScreenHeader
-        title="Announcements"
-        subtitle="Trip updates & alerts"
+        title="Expedition Updates"
+        subtitle="Announcements, alerts & notices"
         onBack={() => navigation.goBack()}
         rightAction={isAdmin ? { icon: '＋', onPress: () => setShowModal(true) } : undefined}
       />

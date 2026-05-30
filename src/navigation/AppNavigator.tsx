@@ -7,7 +7,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -36,86 +35,127 @@ const Tab = createBottomTabNavigator();
 // ── Custom Tab Bar ────────────────────────────────────────────────────────────
 
 const TAB_CONFIG = [
-  { name: 'HomeTab', label: 'Home', icon: '🏠' },
-  { name: 'ExpensesTab', label: 'Expenses', icon: '💳' },
-  { name: 'ReceiptsTab', label: 'Scan', icon: '📷' },
-  { name: 'BalancesTab', label: 'Balance', icon: '⚖️' },
-  { name: 'MoreTab', label: 'More', icon: '☰' },
+  { name: 'HomeTab', label: 'Expedition', icon: '🏝' },
+  { name: 'ItineraryTab', label: 'Itinerary', icon: '📅' },
+  { name: 'ExpensesTab', label: 'Expenses', icon: '💰' },
+  { name: 'ReceiptsTab', label: 'Receipts', icon: '📸' },
+  { name: 'HubTab', label: 'Hub', icon: '☰' },
 ];
 
 function CustomTabBar({ state, navigation }: any) {
   const insets = useSafeAreaInsets();
 
   return (
-    <View style={[tabStyles.bar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-      <View style={tabStyles.topBorder} />
-      {state.routes.map((route: any, index: number) => {
-        const config = TAB_CONFIG.find((t) => t.name === route.name) || TAB_CONFIG[0];
-        const isFocused = state.index === index;
+    <View style={[tabStyles.barWrapper, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <LinearGradient
+        colors={[Colors.safariGreenDark, Colors.black]}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={tabStyles.topBorder}>
+        <LinearGradient
+          colors={['transparent', Colors.gold + '70', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={{ height: 1 }}
+        />
+      </View>
+      <View style={tabStyles.bar}>
+        {state.routes.map((route: any, index: number) => {
+          const config = TAB_CONFIG.find((t) => t.name === route.name) || TAB_CONFIG[0];
+          const isFocused = state.index === index;
 
-        return (
-          <TouchableOpacity
-            key={route.key}
-            style={tabStyles.tab}
-            onPress={() => { if (!isFocused) navigation.navigate(route.name); }}
-            activeOpacity={0.7}
-          >
-            <View style={[tabStyles.tabInner, isFocused && tabStyles.tabInnerActive]}>
+          return (
+            <TouchableOpacity
+              key={route.key}
+              style={tabStyles.tab}
+              onPress={() => { if (!isFocused) navigation.navigate(route.name); }}
+              activeOpacity={0.7}
+            >
+              {isFocused && (
+                <LinearGradient
+                  colors={[Colors.gold + '20', 'transparent']}
+                  style={tabStyles.activeBg}
+                />
+              )}
               <Text style={tabStyles.tabIcon}>{config.icon}</Text>
               <Text style={[tabStyles.tabLabel, isFocused && tabStyles.tabLabelActive]}>
                 {config.label}
               </Text>
-            </View>
-          </TouchableOpacity>
-        );
-      })}
+              {isFocused && <View style={tabStyles.activeDot} />}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
-// ── More Menu Screen ──────────────────────────────────────────────────────────
+// ── Hub / More Menu ───────────────────────────────────────────────────────────
 
-function MoreMenuScreen({ navigation }: any) {
+function HubScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
 
   const ITEMS = [
-    { icon: '📢', label: 'Announcements', subtitle: 'Trip updates, alerts & notices', screen: 'Announcements' },
-    { icon: '📋', label: 'Itinerary', subtitle: 'Flights, hotels & activity schedules', screen: 'Itinerary' },
-    { icon: '🆘', label: 'Emergency Center', subtitle: 'Police, ambulance & embassy contacts', screen: 'Emergency' },
-    { icon: '👥', label: 'Traveler Directory', subtitle: 'Group contact list', screen: 'Directory' },
-    { icon: '💸', label: 'Settlement Center', subtitle: 'Record payments & settle debts', screen: 'Settlement' },
-    { icon: '📸', label: 'Memory Vault', subtitle: 'Photos & moments from the trip', screen: 'Memory' },
+    { icon: '📢', label: 'Expedition Updates', subtitle: 'Announcements, alerts & trip notices', screen: 'Announcements', accent: Colors.amber },
+    { icon: '👥', label: 'Traveler Directory', subtitle: 'Contact the group', screen: 'Directory', accent: Colors.teal },
+    { icon: '⚖️', label: 'Balances', subtitle: 'Who owes whom', screen: 'BalancesTab', accent: Colors.safariGreenLight },
+    { icon: '💸', label: 'Settlement Center', subtitle: 'Record payments & settle debts', screen: 'Settlement', accent: Colors.gold },
+    { icon: '🆘', label: 'Emergency Center', subtitle: 'Police, ambulance & embassy contacts', screen: 'Emergency', accent: Colors.error },
+    { icon: '📸', label: 'Memory Vault', subtitle: 'Photos & moments from the trip', screen: 'Memory', accent: Colors.teal },
   ];
 
   return (
-    <View style={[moreStyles.root, { paddingTop: insets.top }]}>
+    <View style={[hubStyles.root, { paddingTop: insets.top }]}>
       <LinearGradient
-        colors={[Colors.black, '#0A0800', Colors.black]}
+        colors={[Colors.safariGreenDark, Colors.black, '#0A0800']}
+        locations={[0, 0.3, 1]}
         style={StyleSheet.absoluteFill}
       />
-      <View style={moreStyles.topAccent} />
 
-      <View style={moreStyles.header}>
-        <Text style={moreStyles.title}>Expedition Hub</Text>
-        <Text style={moreStyles.subtitle}>🌍 Zanzibar & Cape Town 2027</Text>
+      {/* Gold accent top */}
+      <View style={hubStyles.topAccent}>
+        <LinearGradient
+          colors={['transparent', Colors.gold + '80', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={{ height: 3 }}
+        />
       </View>
 
-      <View style={moreStyles.list}>
+      <View style={hubStyles.header}>
+        <Text style={hubStyles.title}>Expedition Hub</Text>
+        <Text style={hubStyles.subtitle}>🌍 Zanzibar & Cape Town 2027</Text>
+        <View style={hubStyles.divider}>
+          <LinearGradient
+            colors={['transparent', Colors.gold + '60', 'transparent']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{ height: 1 }}
+          />
+        </View>
+      </View>
+
+      <View style={hubStyles.list}>
         {ITEMS.map((item) => (
           <TouchableOpacity
             key={item.screen}
-            style={moreStyles.item}
+            style={hubStyles.item}
             onPress={() => navigation.navigate(item.screen)}
-            activeOpacity={0.8}
+            activeOpacity={0.75}
           >
-            <View style={moreStyles.iconBg}>
-              <Text style={moreStyles.icon}>{item.icon}</Text>
-            </View>
-            <View style={moreStyles.content}>
-              <Text style={moreStyles.label}>{item.label}</Text>
-              <Text style={moreStyles.subtitle2}>{item.subtitle}</Text>
-            </View>
-            <Text style={moreStyles.chevron}>›</Text>
+            <LinearGradient
+              colors={[Colors.safariGreen + '20', Colors.cardBg]}
+              style={hubStyles.itemGrad}
+            >
+              <View style={[hubStyles.iconBg, { backgroundColor: item.accent + '20', borderColor: item.accent + '40' }]}>
+                <Text style={hubStyles.icon}>{item.icon}</Text>
+              </View>
+              <View style={hubStyles.content}>
+                <Text style={hubStyles.label}>{item.label}</Text>
+                <Text style={hubStyles.itemSubtitle}>{item.subtitle}</Text>
+              </View>
+              <Text style={[hubStyles.chevron, { color: item.accent }]}>›</Text>
+            </LinearGradient>
           </TouchableOpacity>
         ))}
       </View>
@@ -132,10 +172,10 @@ function TabNavigator() {
       screenOptions={{ headerShown: false }}
     >
       <Tab.Screen name="HomeTab" component={DashboardScreen} />
+      <Tab.Screen name="ItineraryTab" component={ItineraryScreen} />
       <Tab.Screen name="ExpensesTab" component={ExpensesScreen} />
       <Tab.Screen name="ReceiptsTab" component={ReceiptsScreen} />
-      <Tab.Screen name="BalancesTab" component={BalancesScreen} />
-      <Tab.Screen name="MoreTab" component={MoreMenuScreen} />
+      <Tab.Screen name="HubTab" component={HubScreen} />
     </Tab.Navigator>
   );
 }
@@ -161,6 +201,7 @@ export function AppNavigator() {
             <Stack.Screen name="Receipts" component={ReceiptsScreen} />
             <Stack.Screen name="Expenses" component={ExpensesScreen} />
             <Stack.Screen name="Balances" component={BalancesScreen} />
+            <Stack.Screen name="BalancesTab" component={BalancesScreen} />
             <Stack.Screen name="Settlement" component={SettlementScreen} />
             <Stack.Screen name="Memory" component={MemoryScreen} />
             <Stack.Screen name="Announcements" component={AnnouncementsScreen} />
@@ -174,33 +215,33 @@ export function AppNavigator() {
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const tabStyles = StyleSheet.create({
-  bar: {
-    flexDirection: 'row',
-    backgroundColor: Colors.black,
-    paddingTop: Spacing.sm,
-    borderTopWidth: 0,
+  barWrapper: {
+    position: 'relative',
+    paddingTop: Spacing.xs,
   },
   topBorder: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: 1,
-    backgroundColor: Colors.gold + '50',
+  },
+  bar: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.xs,
   },
   tab: {
     flex: 1,
     alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    position: 'relative',
   },
-  tabInner: {
-    alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: Spacing.sm,
+  activeBg: {
+    position: 'absolute',
+    top: 0,
+    left: 4,
+    right: 4,
+    bottom: 0,
     borderRadius: BorderRadius.md,
-    minWidth: 52,
-  },
-  tabInnerActive: {
-    backgroundColor: Colors.gold + '18',
   },
   tabIcon: {
     fontSize: 22,
@@ -208,63 +249,74 @@ const tabStyles = StyleSheet.create({
   },
   tabLabel: {
     color: Colors.textMuted,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '600',
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
   },
   tabLabelActive: {
     color: Colors.gold,
   },
+  activeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.gold,
+    marginTop: 2,
+  },
 });
 
-const moreStyles = StyleSheet.create({
+const hubStyles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: Colors.black,
     paddingHorizontal: Spacing.base,
   },
   topAccent: {
-    height: 2,
-    backgroundColor: Colors.gold,
-    marginBottom: Spacing.xl,
+    marginBottom: Spacing.base,
   },
   header: {
-    marginBottom: Spacing['2xl'],
+    marginBottom: Spacing.xl,
+    paddingTop: Spacing.base,
   },
   title: {
-    color: Colors.textPrimary,
+    color: Colors.gold,
     fontSize: Typography.sizes['2xl'],
-    fontWeight: '800',
+    fontWeight: '900',
     marginBottom: Spacing.xs,
+    letterSpacing: 0.5,
   },
   subtitle: {
     color: Colors.textSecondary,
     fontSize: Typography.sizes.base,
+    marginBottom: Spacing.base,
+  },
+  divider: {
+    marginTop: Spacing.xs,
   },
   list: {
     gap: Spacing.sm,
   },
   item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.cardBg,
     borderRadius: BorderRadius.xl,
-    padding: Spacing.base,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: Colors.borderColor,
+  },
+  itemGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.base,
     gap: Spacing.md,
   },
   iconBg: {
     width: 52,
     height: 52,
     borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.gold + '15',
     borderWidth: 1,
-    borderColor: Colors.gold + '30',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  icon: { fontSize: 26 },
+  icon: { fontSize: 24 },
   content: { flex: 1 },
   label: {
     color: Colors.textPrimary,
@@ -272,12 +324,11 @@ const moreStyles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 3,
   },
-  subtitle2: {
+  itemSubtitle: {
     color: Colors.textSecondary,
     fontSize: Typography.sizes.sm,
   },
   chevron: {
-    color: Colors.gold,
     fontSize: 28,
     fontWeight: '300',
     lineHeight: 32,

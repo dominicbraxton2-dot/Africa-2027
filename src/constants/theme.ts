@@ -1,38 +1,54 @@
 export const Colors = {
-  // Primary palette - Luxury gold & black
-  gold: '#C9A84C',
-  goldLight: '#E8C96A',
-  goldDark: '#A07830',
-  goldMuted: '#C9A84C33',
+  // Invitation-inspired luxury palette
+  gold: '#D4AF37',
+  goldLight: '#F0CC50',
+  goldDark: '#A8860A',
+  goldMuted: '#D4AF3730',
+  goldSubtle: '#D4AF3715',
 
-  black: '#0A0A0A',
-  darkGray: '#1A1A1A',
-  cardBg: '#141414',
-  surfaceBg: '#1E1E1E',
-  borderColor: '#2A2A2A',
+  // Backgrounds — deep black with green undertones
+  black: '#0B0B0B',
+  darkGray: '#111111',
+  cardBg: '#141A12',
+  surfaceBg: '#1A2218',
+  borderColor: '#2A3828',
 
+  // Safari Green
+  safariGreen: '#1D3B2A',
+  safariGreenLight: '#2A5A3E',
+  safariGreenDark: '#0F2218',
+
+  // Sunset Amber
+  amber: '#D88C2D',
+  amberLight: '#F0A840',
+  amberDark: '#A0640A',
+
+  // Ocean Teal
+  teal: '#1B7F8A',
+  tealLight: '#24A0AE',
+  tealDark: '#0F5560',
+
+  // Text
   white: '#FFFFFF',
-  offWhite: '#F5F0E8',
-  textPrimary: '#F5F0E8',
-  textSecondary: '#A09070',
-  textMuted: '#6B6050',
+  offWhite: '#F8F2E0',
+  textPrimary: '#F8F2E0',
+  textSecondary: '#B0A070',
+  textMuted: '#6A5A40',
 
-  // Accent colors - African-inspired
-  savanna: '#D4874A',
-  baobab: '#8B6F47',
-  ocean: '#2A6B7C',
+  // Legacy aliases used in existing screens
   zanzibar: '#1A8C7A',
-  sunset: '#E8643A',
+  ocean: '#1B7F8A',
+  savanna: '#D88C2D',
 
   // Status
   success: '#4CAF78',
-  warning: '#E8B84A',
+  warning: '#D88C2D',
   error: '#E85A4A',
-  info: '#4A8CE8',
+  info: '#1B7F8A',
 
   // Transparent
-  overlay: 'rgba(0,0,0,0.7)',
-  goldOverlay: 'rgba(201,168,76,0.15)',
+  overlay: 'rgba(0,0,0,0.75)',
+  goldOverlay: 'rgba(212,175,55,0.15)',
 };
 
 export const Typography = {
@@ -77,15 +93,22 @@ export const Shadows = {
   gold: {
     shadowColor: Colors.gold,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 10,
   },
   dark: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 6,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  green: {
+    shadowColor: Colors.safariGreen,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
   },
 };
